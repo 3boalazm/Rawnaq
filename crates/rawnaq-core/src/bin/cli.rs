@@ -12,6 +12,9 @@ use std::time::Instant;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("space") {
+        return space(&args[2], &args[3], &args[4], args[5].parse()?);
+    }
     if args.get(1).map(String::as_str) == Some("moss") {
         return moss(&args[2], &args[3], &args[4]);
     }
@@ -288,6 +291,19 @@ fn moss(models: &str, input: &str, output: &str) -> Result<()> {
     let out = engine.denoise(&audio, &no_progress)?;
     let secs = audio.channels[0].len() as f32 / audio.sample_rate as f32;
     println!("{secs:.1}s of audio in {:.1}s", t.elapsed().as_secs_f32());
+    write_preview_wav(&out, Path::new(output))?;
+    Ok(())
+}
+
+/// Apply only the mastering stage with one reverb style, to audition it.
+///   rawnaq-cli space <input> <output> <style> <amount 0..1>
+fn space(input: &str, output: &str, style: &str, amount: f32) -> Result<()> {
+    let audio = load(Path::new(input))?;
+    let reverb: ReverbStyle = serde_json::from_str(&format!("\"{style}\""))?;
+    let s = EnhanceSettings { tone_restore: false, stereo: true, reverb, reverb_amount: amount, ..Default::default() };
+    let t = Instant::now();
+    let (out, report) = enhance(&audio, &s, (0.0, 0.0));
+    println!("{style}: {:.2}s, gain {:+.1} dB, limited {:.1} dB", t.elapsed().as_secs_f32(), report.gain_db, report.limited_db);
     write_preview_wav(&out, Path::new(output))?;
     Ok(())
 }

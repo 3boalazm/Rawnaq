@@ -1136,3 +1136,38 @@ button {
 .engines button.on { border-color: rgba(255, 178, 77, 0.6); background: rgba(255, 122, 26, 0.1); }
 .engines button.on b { color: var(--accent-2); }
 .engines button:disabled { opacity: 0.4; cursor: default; }
+
+/* Reverb styles: a grid of rooms to pick from. */
+.spaces { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.spaces button {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px;
+  text-align: start;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+}
+.spaces button b { font-size: 13px; color: var(--text); }
+.spaces button small { font-size: 10.5px; line-height: 1.5; opacity: 0.75; }
+.spaces button.on { border-color: rgba(255, 178, 77, 0.6); background: rgba(255, 122, 26, 0.1); }
+.spaces button.on b { color: var(--accent-2); }
+.spaces button:disabled { opacity: 0.4; cursor: default; }
+
+/* Equaliser: preset chips that wrap, and five vertical faders. */
+.chips.wrap { flex-wrap: wrap; }
+.chips.wrap button { flex: 1 1 28%; }
+.eq { display: flex; justify-content: space-between; gap: 4px; padding: 14px 4px 4px; }
+.eq-band { display: grid; justify-items: center; gap: 8px; flex: 1; font-size: 11px; color: var(--muted); }
+.eq-band b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--text); min-height: 15px; }
+.eq-band input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 150px;
+  accent-color: var(--accent, #ff7a1a);
+  cursor: pointer;
+}
+.eq-band input[type="range"]:disabled { opacity: 0.4; cursor: default; }

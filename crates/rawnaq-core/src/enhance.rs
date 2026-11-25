@@ -1,9 +1,12 @@
 //! After the denoiser: give the voice back its tone and its level.
 //!
-//! Nothing here invents sound. It is shelving EQ and gain, the same tools a
-//! mastering engineer would use, applied to what is already in the recording.
+//! Nothing here invents sound, with one exception the user has to ask for:
+//! the optional reverberation ([`crate::reverb`]). The rest is shelving EQ and
+//! gain, the same tools a mastering engineer would use, applied to what is
+//! already in the recording.
 
-use cathar::{bass, highpass, integrated_loudness, lowpass, treble, AudioData};
+use crate::reverb::{reverb, ReverbStyle};
+use cathar::{bass, equalizer, highpass, integrated_loudness, lowpass, treble, AudioData};
 use serde::{Deserialize, Serialize};
 
 /// Below this the voice's body lives; the low shelf acts here.
@@ -14,6 +17,8 @@ const HIGH_HZ: f32 = 3000.0;
 /// the denoiser removed up there was hiss, not voice.
 const MAX_LOW_RESTORE_DB: f32 = 6.0;
 const MAX_HIGH_RESTORE_DB: f32 = 4.0;
+/// Centre of each equaliser band, Hz. The first and last are shelves.
+pub const EQ_HZ: [f32; 5] = [100.0, 300.0, 1000.0, 3000.0, 8000.0];
 /// Output never exceeds this, whatever the gain.
 const CEILING_DBFS: f32 = -1.0;
 
@@ -30,16 +35,33 @@ pub struct EnhanceSettings {
     /// Bring the recording up to `target_lufs`.
     pub loudness: bool,
     pub target_lufs: f32,
-    /// Master output gain, dB (−12..+12), applied after everything else and
+    /// Five-band equaliser, dB per band (−12..+12), at [`EQ_HZ`].
+    pub eq_db: [f32; 5],
+    /// Master output gain, dB (−12..+24), applied after everything else and
     /// before the limiter.
     pub master_db: f32,
     /// Write a mono recording to both left and right channels.
     pub stereo: bool,
+    /// The space added around the voice; `None` adds nothing.
+    pub reverb: ReverbStyle,
+    /// 0..1, how loud that space is next to the voice.
+    pub reverb_amount: f32,
 }
 
 impl Default for EnhanceSettings {
     fn default() -> Self {
-        Self { tone_restore: true, warmth_db: 0.0, clarity_db: 0.0, loudness: true, target_lufs: -18.0, master_db: 0.0, stereo: false }
+        Self {
+            tone_restore: true,
+            warmth_db: 0.0,
+            clarity_db: 0.0,
+            loudness: true,
+            target_lufs: -18.0,
+            eq_db: [0.0; 5],
+            master_db: 0.0,
+            stereo: false,
+            reverb: ReverbStyle::None,
+            reverb_amount: 0.4,
+        }
     }
 }
 
@@ -91,7 +113,8 @@ pub fn tone_loss(before: &AudioData, after: &AudioData, mask: &[f32]) -> (f32, f
     (db(low.0, low.1) - overall, if has_high { db(high.0, high.1) - overall } else { 0.0 })
 }
 
-/// EQ, then loudness, then a limiter. `loss` comes from [`tone_loss`].
+/// EQ, then the optional reverberation, then loudness, then a limiter.
+/// `loss` comes from [`tone_loss`].
 pub fn enhance(audio: &AudioData, s: &EnhanceSettings, loss: (f32, f32)) -> (AudioData, EnhanceReport) {
     let sr = audio.sample_rate;
     let mut report = EnhanceReport { low_loss_db: loss.0, high_loss_db: loss.1, ..Default::default() };
@@ -115,27 +138,46 @@ pub fn enhance(audio: &AudioData, s: &EnhanceSettings, loss: (f32, f32)) -> (Aud
             if report.high_gain_db.abs() > 0.05 {
                 x = treble(&x, sr, HIGH_HZ, report.high_gain_db);
             }
+            for (band, (hz, gain)) in EQ_HZ.iter().zip(s.eq_db).enumerate() {
+                let gain = gain.clamp(-12.0, 12.0);
+                // A band above what the recording can hold has nothing to act on.
+                if gain.abs() < 0.05 || *hz >= sr as f32 * 0.45 {
+                    continue;
+                }
+                x = match band {
+                    0 => bass(&x, sr, *hz, gain),
+                    4 => treble(&x, sr, *hz, gain),
+                    _ => equalizer(&x, sr, *hz, 1.0, gain),
+                };
+            }
             x
         })
         .collect();
 
+    // Before the reverberation, so a mono recording gets a different space on
+    // each side instead of the same one twice.
+    if s.stereo && channels.len() == 1 {
+        channels.push(channels[0].clone());
+    }
+    if s.reverb != ReverbStyle::None {
+        let wet = reverb(&AudioData { sample_rate: sr, channels }, s.reverb, s.reverb_amount);
+        channels = wet.channels;
+    }
+
     if s.loudness {
         let measured = integrated_loudness(&channels, sr);
         if measured.is_finite() {
-            report.gain_db = (s.target_lufs.clamp(-30.0, -10.0) - measured).clamp(-20.0, 30.0);
+            report.gain_db = (s.target_lufs.clamp(-30.0, -8.0) - measured).clamp(-20.0, 36.0);
             let g = 10f32.powf(report.gain_db / 20.0);
             channels.iter_mut().flatten().for_each(|v| *v *= g);
         }
     }
-    let master = s.master_db.clamp(-12.0, 12.0);
+    let master = s.master_db.clamp(-12.0, 24.0);
     if master.abs() > 0.01 {
         let g = 10f32.powf(master / 20.0);
         channels.iter_mut().flatten().for_each(|v| *v *= g);
     }
     report.limited_db = limit(&mut channels, sr, CEILING_DBFS);
-    if s.stereo && channels.len() == 1 {
-        channels.push(channels[0].clone());
-    }
 
     (AudioData { sample_rate: sr, channels }, report)
 }

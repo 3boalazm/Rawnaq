@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Orb from "./components/Orb";
-import { DenoisePanel, DiagnosePanel, MasterPanel, RepairPanel } from "./components/Panels";
+import { DenoisePanel, DiagnosePanel, EqPanel, MasterPanel, RepairPanel, SpacePanel } from "./components/Panels";
 import Rail, { type Tool } from "./components/Rail";
 import Timeline, { type Track } from "./components/Timeline";
 import { useSession } from "./hooks/useSession";
@@ -12,6 +12,8 @@ const TOOL_TITLE: Record<Tool, [string, string]> = {
   repair: ["الإصلاح", "علاج التلف الميكانيكي والكهربائي"],
   denoise: ["التنقية", "إزالة الضوضاء مع حماية صوت القارئ"],
   master: ["الماستر", "النغمة والمستوى النهائي"],
+  eq: ["المعادل", "تشكيل نغمة الصوت بالترددات"],
+  space: ["الصدى", "المكان الذي تُسمع فيه التلاوة"],
 };
 
 const MODE_LABEL = { original: "الأصل", restored: "بعد الترميم", removed: "المحذوف" } as const;
@@ -182,6 +184,8 @@ export default function App() {
               {tool === "repair" && <RepairPanel s={s} />}
               {tool === "denoise" && <DenoisePanel s={s} />}
               {tool === "master" && <MasterPanel s={s} />}
+              {tool === "eq" && <EqPanel s={s} />}
+              {tool === "space" && <SpacePanel s={s} />}
             </div>
             <footer>
               <div className="engines" role="radiogroup" aria-label="طريقة الترميم">

@@ -1,4 +1,4 @@
-export type Tool = "diagnose" | "repair" | "denoise" | "master";
+export type Tool = "diagnose" | "repair" | "denoise" | "master" | "eq" | "space";
 
 const TOOLS: { id: Tool; label: string; icon: JSX.Element }[] = [
   { id: "diagnose", label: "تشخيص", icon: <path d="M3 12h4l3-8 4 16 3-8h4" /> },
@@ -20,6 +20,25 @@ const TOOLS: { id: Tool; label: string; icon: JSX.Element }[] = [
       </>
     ),
   },
+  {
+    id: "eq",
+    label: "معادل",
+    icon: (
+      <>
+        <path d="M5 20V10M10 20V4M15 20v-8M20 20V7" />
+      </>
+    ),
+  },
+  {
+    id: "space",
+    label: "صدى",
+    icon: (
+      <>
+        <path d="M4 20V11a8 8 0 0 1 16 0v9" />
+        <path d="M9 20v-6a3 3 0 0 1 6 0v6M2.5 20h19" />
+      </>
+    ),
+  },
 ];
 
 interface Props {
@@ -28,7 +47,7 @@ interface Props {
   onSelect: (t: Tool) => void;
 }
 
-/** The four stages of the work, as a vertical tool rail. */
+/** The stages of the work, as a vertical tool rail. */
 export default function Rail({ tool, disabled, onSelect }: Props) {
   return (
     <nav className="rail" aria-label="الأدوات">

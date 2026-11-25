@@ -79,9 +79,16 @@ export interface EnhanceSettings {
   clarity_db: number;
   loudness: boolean;
   target_lufs: number;
+  /** Five-band equaliser, dB per band, at 100 Hz, 300 Hz, 1 kHz, 3 kHz, 8 kHz. */
+  eq_db: number[];
   master_db: number;
   stereo: boolean;
+  reverb: ReverbStyle;
+  /** How loud the reverberation is next to the voice, 0..1. */
+  reverb_amount: number;
 }
+
+export type ReverbStyle = "none" | "room" | "mosque" | "grand" | "hall" | "vast";
 
 export interface RepairSettings {
   fill_dropouts: boolean;

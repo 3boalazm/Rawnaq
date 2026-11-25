@@ -1,5 +1,5 @@
 import type { Session } from "../hooks/useSession";
-import { ISSUE_LABEL, LOUDNESS_LEVELS, NOISE_KIND, signed } from "../lib/format";
+import { ISSUE_LABEL, LOUDNESS_LEVELS, EQ_BANDS, EQ_PRESETS, NOISE_KIND, REVERBS, signed } from "../lib/format";
 import Knob from "./Knob";
 import Switch from "./Switch";
 import ToneCurve from "./ToneCurve";
@@ -215,7 +215,7 @@ export function MasterPanel({ s }: { s: Session }) {
           label="الصوت الرئيسي"
           value={e.master_db}
           min={-12}
-          max={12}
+          max={24}
           step={0.5}
           reset={0}
           display={signed(e.master_db)}
@@ -290,6 +290,101 @@ export function MasterPanel({ s }: { s: Session }) {
           )}
         </p>
       )}
+    </>
+  );
+}
+
+export function SpacePanel({ s }: { s: Session }) {
+  const e = s.settings.enhance;
+  const off = !!s.busy;
+  const none = e.reverb === "none";
+  return (
+    <>
+      <div className="spaces" role="radiogroup" aria-label="نمط الصدى">
+        {REVERBS.map((r) => (
+          <button
+            key={r.id}
+            role="radio"
+            aria-checked={e.reverb === r.id}
+            className={e.reverb === r.id ? "on" : ""}
+            disabled={off}
+            onClick={() => s.patchEnhance({ reverb: r.id })}
+          >
+            <b>{r.label}</b>
+            <small>{r.help}</small>
+          </button>
+        ))}
+      </div>
+      <div className="master">
+        <Knob
+          size="lg"
+          label="مقدار الصدى"
+          value={Math.round(e.reverb_amount * 100)}
+          min={0}
+          max={100}
+          step={1}
+          reset={40}
+          display={`${Math.round(e.reverb_amount * 100)}%`}
+          disabled={off || none}
+          onChange={(v) => s.patchEnhance({ reverb_amount: v / 100 })}
+        />
+      </div>
+      <p className="fine">
+        الصدى يُضاف بعد التنقية ولا يغيّر صوت القارئ نفسه، ويُطبَّق تلقائيًا أثناء الاستماع.
+        {!s.applied && " رمّم التسجيل أولًا لتسمعه."}
+        {s.loaded!.diagnosis.channels === 1 && !e.stereo && !none && (
+          <> فعّل «قناتان» في الماستر ليحيط الصدى بالصوت من الجانبين.</>
+        )}
+      </p>
+    </>
+  );
+}
+
+export function EqPanel({ s }: { s: Session }) {
+  const e = s.settings.enhance;
+  const off = !!s.busy;
+  const same = (a: number[], b: number[]) => a.every((v, i) => v === b[i]);
+  const setBand = (i: number, v: number) =>
+    s.patchEnhance({ eq_db: e.eq_db.map((old, k) => (k === i ? v : old)) });
+  return (
+    <>
+      <div className="chips wrap" role="radiogroup" aria-label="أنماط المعادل">
+        {EQ_PRESETS.map((p) => (
+          <button
+            key={p.label}
+            role="radio"
+            aria-checked={same(p.db, e.eq_db)}
+            className={same(p.db, e.eq_db) ? "on" : ""}
+            disabled={off}
+            onClick={() => s.patchEnhance({ eq_db: [...p.db] })}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      <div className="eq" dir="ltr">
+        {EQ_BANDS.map((hz, i) => (
+          <label className="eq-band" key={hz}>
+            <b>{signed(e.eq_db[i]).replace(" dB", "")}</b>
+            <input
+              type="range"
+              min={-12}
+              max={12}
+              step={0.5}
+              value={e.eq_db[i]}
+              disabled={off}
+              aria-label={`${hz} Hz`}
+              onChange={(ev) => setBand(i, Number(ev.target.value))}
+              onDoubleClick={() => setBand(i, 0)}
+            />
+            <span>{hz}</span>
+          </label>
+        ))}
+      </div>
+      <p className="fine">
+        اختر نمطًا ثم عدّل أي تردد بيدك. النقر المزدوج على منزلق يعيده إلى الصفر. يُطبَّق تلقائيًا.
+        {!s.applied && " رمّم التسجيل أولًا لتسمعه."}
+      </p>
     </>
   );
 }

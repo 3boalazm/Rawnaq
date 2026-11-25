@@ -1,4 +1,4 @@
-import type { Engine, Settings, Verdict } from "../types";
+import type { Engine, ReverbStyle, Settings, Verdict } from "../types";
 
 export const AUDIO_EXTENSIONS = [
   "wav", "mp3", "flac", "ogg", "m4a", "aac", "aiff", "aif", "opus", "mp4", "mkv",
@@ -17,8 +17,11 @@ export const DEFAULT_SETTINGS: Settings = {
     clarity_db: 0,
     loudness: true,
     target_lufs: -18,
+    eq_db: [0, 0, 0, 0, 0],
     master_db: 0,
     stereo: false,
+    reverb: "none",
+    reverb_amount: 0.4,
   },
 };
 
@@ -58,6 +61,15 @@ export const ENGINES: { id: Engine; label: string; help: string }[] = [
   { id: "mossformer", label: "عميق", help: "ينظّف تحت الصوت أيضًا، أبطأ" },
 ];
 
+export const REVERBS: { id: ReverbStyle; label: string; help: string }[] = [
+  { id: "none", label: "بدون", help: "الصوت كما هو" },
+  { id: "room", label: "مصلّى", help: "قريب ودافئ، صدى قصير" },
+  { id: "mosque", label: "مسجد", help: "صدى التلاوة المألوف" },
+  { id: "grand", label: "جامع كبير", help: "قبّة عالية، صدى طويل وعميق" },
+  { id: "hall", label: "قاعة", help: "طويل لكنه واضح ولامع" },
+  { id: "vast", label: "فضاء", help: "واسع وبعيد، ينقل التلاوة لمكان آخر" },
+];
+
 export const NOISE_KIND: Record<string, string> = {
   low: "دمدمة وطنين منخفض",
   mid: "ضجيج محيط (قاعة أو جمهور)",
@@ -68,6 +80,20 @@ export const LOUDNESS_LEVELS: [number, string][] = [
   [-23, "هادئ"],
   [-18, "متوسط"],
   [-14, "عالٍ"],
+  [-10, "أقصى"],
+];
+
+export const EQ_BANDS = ["100", "300", "1k", "3k", "8k"];
+
+export const EQ_PRESETS: { label: string; db: number[] }[] = [
+  { label: "مسطّح", db: [0, 0, 0, 0, 0] },
+  { label: "دفء", db: [4, 2, 0, -1, -2] },
+  { label: "حضور", db: [-2, -1, 2, 4, 1] },
+  { label: "وضوح", db: [-3, -2, 0, 3, 5] },
+  { label: "جهير", db: [6, 3, 0, 0, 0] },
+  { label: "بريق", db: [0, 0, 0, 2, 6] },
+  { label: "هادئ", db: [1, 0, 0, -3, -5] },
+  { label: "راديو قديم", db: [-8, -2, 4, 3, -8] },
 ];
 
 export function formatTime(t: number) {
