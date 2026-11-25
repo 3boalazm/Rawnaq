@@ -8,3 +8,4 @@ src-tauri/gen/
 /.cargo/config.toml
 .claude/
 /models/
+/package/

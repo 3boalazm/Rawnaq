@@ -4,7 +4,7 @@ import { DenoisePanel, DiagnosePanel, MasterPanel, RepairPanel } from "./compone
 import Rail, { type Tool } from "./components/Rail";
 import Timeline, { type Track } from "./components/Timeline";
 import { useSession } from "./hooks/useSession";
-import { formatTime, STAGE_LABEL, VERDICT } from "./lib/format";
+import { ENGINES, formatTime, STAGE_LABEL, VERDICT } from "./lib/format";
 import type { Peaks } from "./types";
 
 const TOOL_TITLE: Record<Tool, [string, string]> = {
@@ -184,6 +184,24 @@ export default function App() {
               {tool === "master" && <MasterPanel s={s} />}
             </div>
             <footer>
+              <div className="engines" role="radiogroup" aria-label="طريقة الترميم">
+                {ENGINES.map((e) => {
+                  const missing = e.id === "mossformer" && !s.deepAvailable;
+                  return (
+                    <button
+                      key={e.id}
+                      role="radio"
+                      aria-checked={s.settings.engine === e.id}
+                      className={s.settings.engine === e.id ? "on" : ""}
+                      disabled={!!busy || missing || !s.settings.denoise}
+                      onClick={() => s.patch({ engine: e.id })}
+                    >
+                      <b>{e.label}</b>
+                      <small>{missing ? "غير مثبّت" : e.help}</small>
+                    </button>
+                  );
+                })}
+              </div>
               <button className="btn primary big" onClick={s.run} disabled={!!busy}>
                 {runLabel}
               </button>
@@ -193,7 +211,7 @@ export default function App() {
                   : s.syncing
                     ? "يُطبَّق التغيير…"
                     : s.dirty
-                      ? "تغيير في الإصلاح يحتاج إعادة الترميم."
+                      ? "هذا التغيير يحتاج إعادة الترميم."
                       : "التنقية والماستر يُطبَّقان تلقائيًا."}
               </span>
             </footer>

@@ -1,5 +1,5 @@
 import type { Session } from "../hooks/useSession";
-import { ENGINES, ISSUE_LABEL, LOUDNESS_LEVELS, NOISE_KIND, signed } from "../lib/format";
+import { ISSUE_LABEL, LOUDNESS_LEVELS, NOISE_KIND, signed } from "../lib/format";
 import Knob from "./Knob";
 import Switch from "./Switch";
 import ToneCurve from "./ToneCurve";
@@ -90,29 +90,11 @@ export function DenoisePanel({ s }: { s: Session }) {
     <>
       <Switch
         label="تنقية الضوضاء"
-        help="كاشف صوت · كاشف تشويش · DeepFilterNet 3"
+        help={settings.engine === "mossformer" ? "كاشف صوت · كاشف تشويش · MossFormer2" : "كاشف صوت · كاشف تشويش · DeepFilterNet 3"}
         checked={settings.denoise}
         disabled={!!busy}
         onChange={(v) => s.patch({ denoise: v })}
       />
-      <div className="chips" role="radiogroup" aria-label="محرك التنقية العميقة">
-        {ENGINES.map((e) => (
-          <button
-            key={e.id}
-            role="radio"
-            aria-checked={settings.engine === e.id}
-            className={settings.engine === e.id ? "on" : ""}
-            disabled={off || (e.id === "mossformer" && !s.deepAvailable)}
-            onClick={() => s.patch({ engine: e.id })}
-          >
-            {e.label}
-          </button>
-        ))}
-      </div>
-      <p className="fine">
-        {ENGINES.find((e) => e.id === settings.engine)!.help}
-        {!s.deepAvailable && " المحرك العميق غير مثبّت: ضع ملف الموديل ومكتبة ONNX Runtime في مجلد models."}
-      </p>
       <div className="knob-row three">
         <Knob
           label="أرضية التشويش"

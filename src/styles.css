@@ -1117,3 +1117,22 @@ button {
 .band i { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .band em { display: block; height: 100%; border-radius: 2px; background: var(--track-removed, #a98bff); }
 .band b { font-weight: 500; font-variant-numeric: tabular-nums; direction: ltr; text-align: end; opacity: 0.8; }
+
+/* The two ways to restore, chosen next to the button that starts it. */
+.engines { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
+.engines button {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: start;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+}
+.engines button b { font-size: 13px; color: var(--text, #f3efe9); }
+.engines button small { font-size: 10.5px; line-height: 1.5; opacity: 0.75; }
+.engines button.on { border-color: rgba(255, 178, 77, 0.6); background: rgba(255, 122, 26, 0.1); }
+.engines button.on b { color: var(--accent-2); }
+.engines button:disabled { opacity: 0.4; cursor: default; }

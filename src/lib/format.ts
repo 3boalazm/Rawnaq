@@ -54,12 +54,8 @@ export const VERDICT: Record<Verdict, { title: string; body: string }> = {
 };
 
 export const ENGINES: { id: Engine; label: string; help: string }[] = [
-  { id: "deepfilter", label: "سريع", help: "DeepFilterNet 3: ينظّف الفواصل ويُكفّ تحت الصوت." },
-  {
-    id: "mossformer",
-    label: "عميق",
-    help: "MossFormer2: ينظّف تحت الصوت أيضًا، وأي مقطع يقطعه من التلاوة يُعاد تلقائيًا. أبطأ.",
-  },
+  { id: "deepfilter", label: "سريع", help: "ينظّف الفواصل ويترك ما تحت الصوت" },
+  { id: "mossformer", label: "عميق", help: "ينظّف تحت الصوت أيضًا، أبطأ" },
 ];
 
 export const NOISE_KIND: Record<string, string> = {
