@@ -1,4 +1,4 @@
-import type { Settings, Verdict } from "../types";
+import type { Engine, Settings, Verdict } from "../types";
 
 export const AUDIO_EXTENSIONS = [
   "wav", "mp3", "flac", "ogg", "m4a", "aac", "aiff", "aif", "opus", "mp4", "mkv",
@@ -7,6 +7,7 @@ export const AUDIO_EXTENSIONS = [
 export const DEFAULT_SETTINGS: Settings = {
   repair: { fill_dropouts: true, declick: true, declick_threshold: 10, dehum: true, declip: false },
   denoise: true,
+  engine: "deepfilter",
   hiss: 0.6,
   strength: 0.85,
   protect: 0.9,
@@ -51,6 +52,15 @@ export const VERDICT: Record<Verdict, { title: string; body: string }> = {
     body: "لم تُميَّز مقاطع تلاوة كافية للقياس. اعتمد على الاستماع إلى مسار «المحذوف».",
   },
 };
+
+export const ENGINES: { id: Engine; label: string; help: string }[] = [
+  { id: "deepfilter", label: "سريع", help: "DeepFilterNet 3: ينظّف الفواصل ويُكفّ تحت الصوت." },
+  {
+    id: "mossformer",
+    label: "عميق",
+    help: "MossFormer2: ينظّف تحت الصوت أيضًا، وأي مقطع يقطعه من التلاوة يُعاد تلقائيًا. أبطأ.",
+  },
+];
 
 export const NOISE_KIND: Record<string, string> = {
   low: "دمدمة وطنين منخفض",

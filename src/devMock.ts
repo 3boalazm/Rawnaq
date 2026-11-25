@@ -52,7 +52,7 @@ const processed: Processed = {
   removed_peak_dbfs: -18,
   removed_peaks: fakePeaks(0.14),
   voice_share: 0.62,
-  noise: { level_dbfs: -48, low_dbfs: -55, mid_dbfs: -52, high_dbfs: -50, kind: "high" },
+  noise: { level_dbfs: -48, voiced_dbfs: -44, low_dbfs: -55, mid_dbfs: -52, high_dbfs: -50, kind: "high" },
   voice_regions: [
     [10, 150],
     [180, 320],
@@ -76,6 +76,7 @@ export function installDevMock() {
     (cmd) => {
       if (cmd === "load_audio") return loaded;
       if (cmd === "process") return processed;
+      if (cmd === "engines") return { mossformer: true };
       if (cmd === "plugin:dialog|open") return "C:/demo/recitation.mp3";
       return null;
     },

@@ -19,6 +19,7 @@ cathar = "0.8"
 deep-filter-rt = "0.2"
 earshot = "1.2.2"
 realfft = "3.5"
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-22"] }
 hound = "3"
 ndarray = "0.17"
 serde = { version = "1", features = ["derive"] }

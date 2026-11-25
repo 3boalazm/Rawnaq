@@ -56,6 +56,8 @@ export interface Processed {
 /** The steady noise measured in the recording, levels in dBFS. */
 export interface NoiseProfile {
   level_dbfs: number;
+  /** Noise level while a voice is present; higher when noise rides on the voice. */
+  voiced_dbfs: number;
   low_dbfs: number;
   mid_dbfs: number;
   high_dbfs: number;
@@ -92,11 +94,15 @@ export interface RepairSettings {
 export interface Settings {
   repair: RepairSettings;
   denoise: boolean;
+  engine: Engine;
   /** Share of the measured noise floor removed everywhere, 0..1. */
   hiss: number;
   strength: number;
   protect: number;
   enhance: EnhanceSettings;
 }
+
+/** The deep denoiser that runs on top of the noise-profile engine. */
+export type Engine = "deepfilter" | "mossformer";
 
 export type Mode = "original" | "restored" | "removed";

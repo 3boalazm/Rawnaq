@@ -30,6 +30,8 @@ export function useSession() {
   const [syncing, setSyncing] = useState(false);
   // Whether the backend holds a denoise result for the applied repair settings.
   const [denoiseCached, setDenoiseCached] = useState(false);
+  // Whether the optional MossFormer2 model is installed.
+  const [deepAvailable, setDeepAvailable] = useState(false);
   const audio = useRef<HTMLAudioElement>(null);
   const resume = useRef<{ time: number; play: boolean } | null>(null);
 
@@ -40,6 +42,7 @@ export function useSession() {
   const live =
     changed &&
     same(applied!.repair, settings.repair) &&
+    settings.engine === applied!.engine &&
     (settings.denoise === applied!.denoise || !settings.denoise || denoiseCached);
   const dirty = changed && !live;
 
@@ -58,6 +61,16 @@ export function useSession() {
     el.src = convertFileSrc(source);
     el.load();
   }, [source]);
+
+  // Prefer the deep engine when its model is installed.
+  useEffect(() => {
+    invoke<{ mossformer: boolean }>("engines")
+      .then((e) => {
+        setDeepAvailable(e.mossformer);
+        if (e.mossformer) setSettings((s) => ({ ...s, engine: "mossformer" }));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const un = listen<Busy>("progress", (e) => setBusy((b) => (b ? e.payload : b)));
@@ -84,10 +97,11 @@ export function useSession() {
       setMode("original");
       setTime(0);
       // Offer the repairs the diagnosis calls for.
-      setSettings({
+      setSettings((prev) => ({
         ...DEFAULT_SETTINGS,
+        engine: prev.engine,
         repair: { ...DEFAULT_SETTINGS.repair, declip: result.diagnosis.issues.includes("clipping") },
-      });
+      }));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -121,7 +135,9 @@ export function useSession() {
     try {
       const result = await invoke<Processed>("process", { settings: s });
       setProcessed(result);
-      setDenoiseCached(s.denoise || (denoiseCached && same(applied?.repair, s.repair)));
+      setDenoiseCached(
+        s.denoise || (denoiseCached && same(applied?.repair, s.repair) && applied?.engine === s.engine),
+      );
       setApplied(s);
       // Only the first run moves you to the result; later you stay on your track.
       if (first) setMode("restored");
@@ -222,7 +238,7 @@ export function useSession() {
   };
 
   return {
-    loaded, processed, settings, applied, dirty, busy, syncing, error, notice,
+    loaded, processed, settings, applied, dirty, busy, syncing, error, notice, deepAvailable,
     mode, setMode, playing, time,
     pickFile, run, exportFile, togglePlay, seek,
     patch, patchEnhance, patchRepair, audioProps,

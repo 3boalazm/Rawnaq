@@ -1,5 +1,5 @@
 import type { Session } from "../hooks/useSession";
-import { ISSUE_LABEL, LOUDNESS_LEVELS, NOISE_KIND, signed } from "../lib/format";
+import { ENGINES, ISSUE_LABEL, LOUDNESS_LEVELS, NOISE_KIND, signed } from "../lib/format";
 import Knob from "./Knob";
 import Switch from "./Switch";
 import ToneCurve from "./ToneCurve";
@@ -95,6 +95,24 @@ export function DenoisePanel({ s }: { s: Session }) {
         disabled={!!busy}
         onChange={(v) => s.patch({ denoise: v })}
       />
+      <div className="chips" role="radiogroup" aria-label="محرك التنقية العميقة">
+        {ENGINES.map((e) => (
+          <button
+            key={e.id}
+            role="radio"
+            aria-checked={settings.engine === e.id}
+            className={settings.engine === e.id ? "on" : ""}
+            disabled={off || (e.id === "mossformer" && !s.deepAvailable)}
+            onClick={() => s.patch({ engine: e.id })}
+          >
+            {e.label}
+          </button>
+        ))}
+      </div>
+      <p className="fine">
+        {ENGINES.find((e) => e.id === settings.engine)!.help}
+        {!s.deepAvailable && " المحرك العميق غير مثبّت: ضع ملف الموديل ومكتبة ONNX Runtime في مجلد models."}
+      </p>
       <div className="knob-row three">
         <Knob
           label="أرضية التشويش"
@@ -131,8 +149,8 @@ export function DenoisePanel({ s }: { s: Session }) {
         />
       </div>
       <p className="fine">
-        «أرضية التشويش» تخفض الضجيج الثابت المقيس في كل التسجيل، حتى تحت الصوت. «الشدة» تنقية أعمق
-        تعمل كاملة في الفواصل، و«حماية الصوت» تكفّها حيث يُرصد صوت بشري.
+        «أرضية التشويش» تخفض الضجيج الثابت المقيس في كل التسجيل. «الشدة» مقدار التنقية العميقة،
+        و«حماية الصوت» تكفّها حيث قد تؤذي التلاوة.
       </p>
       {processed && noise && (
         <>
@@ -146,7 +164,9 @@ export function DenoisePanel({ s }: { s: Session }) {
             <div className="detector noise">
               <span>التشويش الثابت</span>
               <b>{noise.level_dbfs.toFixed(0)} dB</b>
-              <small>{NOISE_KIND[noise.kind]}</small>
+              <small>
+                {NOISE_KIND[noise.kind]} · تحت الصوت {noise.voiced_dbfs.toFixed(0)} dB
+              </small>
             </div>
           </div>
           <div className="bands" aria-label="توزيع التشويش على النطاقات">

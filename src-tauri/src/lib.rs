@@ -1,9 +1,11 @@
 //! Tauri shell around `rawnaq-core`: holds the session, caches each stage,
 //! and writes preview files the webview plays through the asset protocol.
 
+use rawnaq_core::mossformer::{find_models, MossFormer};
 use rawnaq_core::{
     denoise_full, detect_voice, diagnose, enhance, learn_noise, load, mix_protected, peaks,
-    quality_gate, repair, residual, save, subtract_noise, tone_loss, voice_mask, voice_regions,
+    quality_gate, repair, residual, save, subtract_noise, tone_loss, voice_cut, voice_mask,
+    voice_regions,
     write_preview_wav, AudioData, Denoised, Diagnosis, EnhanceReport, EnhanceSettings, NoiseProfile,
     Peaks, QualityReport, RepairSettings,
 };
@@ -22,8 +24,8 @@ struct Session {
     repaired: Option<(RepairSettings, Arc<AudioData>)>,
     /// Stage cache: what the detectors found in `repaired`.
     analysis: Option<Arc<Analysis>>,
-    /// Stage cache: the full-strength denoise of `repaired`.
-    denoised: Option<Arc<Denoised>>,
+    /// Stage cache: the full-strength denoise of `repaired`, per engine.
+    denoised: Vec<(Engine, Arc<Denoised>)>,
     output: Option<Arc<AudioData>>,
 }
 
@@ -38,9 +40,23 @@ struct Analysis {
     clean: AudioData,
 }
 
+/// The deep denoiser that runs on top of the noise-profile engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Engine {
+    /// DeepFilterNet 3: fast, built in. Held back wherever a voice is.
+    #[default]
+    DeepFilter,
+    /// MossFormer2: slower, needs its model. Cleans under the voice too; the
+    /// stretches of voice it cuts are handed back to the profile engine.
+    MossFormer,
+}
+
 #[derive(Default)]
 struct AppState {
     session: Mutex<Session>,
+    /// Loaded on first use and kept: loading the model takes seconds.
+    mossformer: Arc<Mutex<Option<MossFormer>>>,
     preview_id: AtomicU64,
 }
 
@@ -48,6 +64,8 @@ struct AppState {
 struct Settings {
     repair: RepairSettings,
     denoise: bool,
+    #[serde(default)]
+    engine: Engine,
     /// 0..1, how much of the measured noise floor is removed, everywhere.
     #[serde(default = "default_hiss")]
     hiss: f32,
@@ -199,11 +217,15 @@ async fn process(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<Processed, String> {
+    let engine = settings.engine;
     let (original, cached_repair, cached_analysis, cached_denoise) = {
         let s = state.session.lock().unwrap();
         let original = s.original.clone().ok_or("no recording is loaded")?;
-        (original, s.repaired.clone(), s.analysis.clone(), s.denoised.clone())
+        let denoised = s.denoised.iter().find(|(e, _)| *e == engine).map(|(_, d)| d.clone());
+        (original, s.repaired.clone(), s.analysis.clone(), denoised)
     };
+    let models = models_dir(&app);
+    let moss = state.mossformer.clone();
 
     let progress_app = app.clone();
     let work = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
@@ -232,8 +254,8 @@ async fn process(
                     let score = detect_voice(&repaired).score();
                     let mask = voice_mask(&score, repaired.channels[0].len(), repaired.sample_rate);
                     progress("detect", 0.5);
-                    let noise = learn_noise(&repaired);
-                    let clean = subtract_noise(&repaired, &noise);
+                    let noise = learn_noise(&repaired, &score);
+                    let clean = subtract_noise(&repaired, &noise, &score);
                     Some(Arc::new(Analysis { score, mask, noise, clean }))
                 }
             }
@@ -246,7 +268,18 @@ async fn process(
                 Some(d) if repair_reused => Some(d),
                 _ => {
                     progress("denoise", 0.0);
-                    Some(Arc::new(denoise_full(&repaired, &progress).map_err(err)?))
+                    Some(Arc::new(match engine {
+                        Engine::DeepFilter => denoise_full(&repaired, &progress).map_err(err)?,
+                        Engine::MossFormer => {
+                            let dir = models.as_deref().ok_or("the MossFormer2 model is not installed")?;
+                            let mut slot = moss.lock().unwrap();
+                            if slot.is_none() {
+                                *slot = Some(MossFormer::load(dir).map_err(err)?);
+                            }
+                            let wet = slot.as_mut().unwrap().denoise(&repaired, &progress).map_err(err)?;
+                            Denoised { wet, lsnr: Vec::new() }
+                        }
+                    }))
                 }
             }
         };
@@ -256,6 +289,18 @@ async fn process(
         // they are taken before tone and loudness change the level.
         let (mixed, quality, loss, regions, share) = match (&denoised, &analysis) {
             (Some(d), Some(a)) => {
+                // What "protect" guards. DeepFilterNet is kept off every
+                // voice. MossFormer2 is trusted under the voice, except where
+                // it cut a detected voice out.
+                let cut;
+                let guard = match engine {
+                    Engine::DeepFilter => &a.mask,
+                    Engine::MossFormer => {
+                        let frames = voice_cut(&repaired, &d.wet, &a.score);
+                        cut = voice_mask(&frames, repaired.channels[0].len(), repaired.sample_rate);
+                        &cut
+                    }
+                };
                 let mixed = mix_protected(
                     &repaired,
                     &a.clean,
@@ -263,7 +308,7 @@ async fn process(
                     settings.hiss,
                     settings.strength,
                     settings.protect,
-                    &a.mask,
+                    guard,
                 );
                 let q = quality_gate(&repaired, &mixed, &a.score);
                 let loss = tone_loss(&repaired, &mixed, &a.mask);
@@ -292,14 +337,15 @@ async fn process(
     let mut s = state.session.lock().unwrap();
     // Results cached for other repair settings describe a different signal.
     if !matches!(&s.repaired, Some((r, _)) if *r == settings.repair) {
-        s.denoised = None;
+        s.denoised.clear();
         s.analysis = None;
     }
     s.repaired = Some((settings.repair, repaired));
     // Keep the caches when denoising is merely switched off.
     let noise = analysis.as_ref().map(|a| a.noise.clone());
-    if denoised.is_some() {
-        s.denoised = denoised;
+    if let Some(d) = denoised {
+        s.denoised.retain(|(e, _)| *e != engine);
+        s.denoised.push((engine, d));
         s.analysis = analysis;
     }
     s.output = Some(output);
@@ -318,6 +364,31 @@ async fn process(
     })
 }
 
+/// Where the optional models live: next to the program, in the app's data
+/// folder, or, in a development build, in the project folder.
+fn models_dir(app: &AppHandle) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+        candidates.push(dir.join("models"));
+    }
+    if let Ok(dir) = app.path().app_data_dir() {
+        candidates.push(dir.join("models"));
+    }
+    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("models"));
+    find_models(&candidates)
+}
+
+#[derive(Serialize)]
+struct Engines {
+    /// Whether the MossFormer2 model and ONNX Runtime were found.
+    mossformer: bool,
+}
+
+#[tauri::command]
+fn engines(app: AppHandle) -> Engines {
+    Engines { mossformer: models_dir(&app).is_some() }
+}
+
 #[tauri::command]
 async fn export_audio(state: State<'_, AppState>, path: String) -> Result<(), String> {
     let output =
@@ -332,7 +403,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![load_audio, process, export_audio])
+        .invoke_handler(tauri::generate_handler![load_audio, process, export_audio, engines])
         .run(tauri::generate_context!())
         .expect("error while running Rawnaq");
 }

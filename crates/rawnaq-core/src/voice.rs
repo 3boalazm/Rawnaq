@@ -161,6 +161,56 @@ impl VoiceTrack {
     }
 }
 
+/// Where a denoiser cut into a voice: one value per 10 ms frame, 0 = its
+/// output can be used, 1 = it dropped a voice the detector found.
+///
+/// Speech denoisers are trained on talking. The long held notes of a
+/// recitation do not sound like talking to them, and they silence whole
+/// stretches of it. Removing only noise barely changes the level of a frame
+/// that holds a voice, so a frame where a voice was detected and the level
+/// fell by more than a decibel or so is a frame where voice went missing.
+///
+/// `score` is the voice score per frame; `dry` and `wet` are the denoiser's
+/// input and output.
+pub fn voice_cut(dry: &AudioData, wet: &AudioData, score: &[f32]) -> Vec<f32> {
+    /// Level drop (dB) where the suspicion starts, and where it is certain.
+    const DROP: (f32, f32) = (1.0, 4.0);
+    let hop = (dry.sample_rate as usize / FRAME_RATE).max(1);
+    let n = dry.channels.first().map_or(0, |c| c.len());
+    let energy = |x: &AudioData, f: usize| -> f32 {
+        let (a, b) = (f * hop, ((f + 1) * hop).min(n));
+        x.channels.iter().map(|c| c.get(a..b).map_or(0.0, |s| s.iter().map(|v| v * v).sum())).sum()
+    };
+    let raw: Vec<f32> = score
+        .iter()
+        .enumerate()
+        .map(|(f, v)| {
+            let (before, after) = (energy(dry, f), energy(wet, f));
+            if before < 1e-9 {
+                return 0.0;
+            }
+            let drop = 10.0 * (before / after.max(1e-12)).log10();
+            let t = ((drop - DROP.0) / (DROP.1 - DROP.0)).clamp(0.0, 1.0);
+            v * t * t * (3.0 - 2.0 * t)
+        })
+        .collect();
+    // Start the hand-over a little before the cut and end it a little after,
+    // so the change falls outside the damaged stretch, and smooth it.
+    let len = raw.len();
+    let widened: Vec<f32> = (0..len)
+        .map(|f| {
+            let (a, b) = (f.saturating_sub(8), (f + 8).min(len - 1));
+            raw[a..=b].iter().fold(0.0f32, |m, v| m.max(*v))
+        })
+        .collect();
+    (0..len)
+        .map(|f| {
+            let (a, b) = (f.saturating_sub(4), (f + 4).min(len - 1));
+            widened[a..=b].iter().sum::<f32>() / (b - a + 1) as f32
+        })
+        .collect()
+}
+
 /// Stretch a per-frame score to one value per sample.
 pub fn voice_mask(score: &[f32], n_samples: usize, sample_rate: u32) -> Vec<f32> {
     let n_frames = score.len();

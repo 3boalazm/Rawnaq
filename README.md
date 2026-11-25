@@ -27,6 +27,25 @@ Each stage is cached. Changing the denoise strength after the first run is
 instant, because the strength is a mix of the repaired and the fully denoised
 signal and the model is not run again.
 
+## Optional deep engine
+
+The denoise panel offers a second, stronger engine: MossFormer2 (48 kHz, from
+[ClearerVoice-Studio](https://github.com/modelscope/ClearerVoice-Studio),
+Apache-2.0). It cleans under the voice, which DeepFilterNet is not allowed to
+do here. It is a speech model and silences long held notes of a recitation,
+so wherever it drops a voice the detector found, that stretch is handed back
+to the noise-profile engine.
+
+It needs two files that are not in this repository, in a `models` folder next
+to the program, in the app's data folder, or in the project folder:
+
+- `mossformer2_48k.onnx` (229 MB) from
+  [TigreGotico/audiosronnx-mossformer2](https://huggingface.co/TigreGotico/audiosronnx-mossformer2)
+- `onnxruntime.dll` from ONNX Runtime 1.22 or newer (for example out of the
+  `onnxruntime` Python package)
+
+Without them the app runs as before and the "deep" option is disabled.
+
 ## Layout
 
 | Path | What |

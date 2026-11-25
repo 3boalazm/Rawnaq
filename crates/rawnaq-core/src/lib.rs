@@ -12,6 +12,7 @@ pub mod denoise;
 pub mod diagnose;
 pub mod enhance;
 pub mod io;
+pub mod mossformer;
 pub mod noise;
 pub mod quality;
 pub mod repair;
@@ -26,7 +27,7 @@ pub use noise::{learn_noise, subtract_noise, NoiseProfile};
 pub use io::{load, peaks, residual, save, write_preview_wav, Peaks};
 pub use quality::{quality_gate, QualityReport, Verdict};
 pub use repair::{repair, RepairSettings};
-pub use voice::{detect_voice, voice_mask, VoiceTrack};
+pub use voice::{detect_voice, voice_cut, voice_mask, VoiceTrack};
 
 /// Progress callback: a stage id and a fraction in `0.0..=1.0`.
 pub type Progress<'a> = &'a (dyn Fn(&str, f32) + Sync);
