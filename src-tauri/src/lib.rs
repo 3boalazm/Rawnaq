@@ -3,7 +3,7 @@
 
 use rawnaq_core::mossformer::{find_models, MossFormer};
 use rawnaq_core::{
-    denoise_full, detect_voice, diagnose, enhance, learn_noise, load, mix_protected, peaks,
+    denoise_full, detect_voice, diagnose, enhance, learn_noise, load, mix_protected, peaks, peaks_of,
     quality_gate, repair, residual, save, subtract_noise, tone_loss, voice_cut, voice_mask,
     voice_regions,
     write_preview_wav, AudioData, Denoised, Diagnosis, EnhanceReport, EnhanceSettings, NoiseProfile,
@@ -323,7 +323,9 @@ async fn process(
         let removed = residual(&original, &mixed);
         let (output, report) = enhance(&mixed, &settings.enhance, loss);
         let output = Arc::new(output);
-        let pk = peaks(&output, WAVE_BUCKETS);
+        // The output may run on past the recording (a reverb tail); the track
+        // shows the recording's own length so it lines up with the others.
+        let pk = peaks_of(&output, WAVE_BUCKETS, mixed.channels[0].len());
         Ok((repaired, analysis, denoised, output, quality, removed, pk, regions, share, report))
     });
     let (repaired, analysis, denoised, output, quality, removed, pk, regions, share, report) =

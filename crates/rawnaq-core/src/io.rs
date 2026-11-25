@@ -64,7 +64,13 @@ pub struct Peaks {
 
 /// Envelope over all channels in `buckets` columns.
 pub fn peaks(audio: &AudioData, buckets: usize) -> Peaks {
-    let len = audio.channels[0].len();
+    peaks_of(audio, buckets, audio.channels[0].len())
+}
+
+/// The waveform of the first `len` samples only, for a signal that runs on
+/// past the part being drawn (a reverb tail after the last word).
+pub fn peaks_of(audio: &AudioData, buckets: usize, len: usize) -> Peaks {
+    let len = len.min(audio.channels[0].len());
     let buckets = buckets.max(1).min(len.max(1));
     let mut min = vec![0.0f32; buckets];
     let mut max = vec![0.0f32; buckets];

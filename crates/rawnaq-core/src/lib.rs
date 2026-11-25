@@ -25,7 +25,7 @@ pub use denoise::{denoise_full, mix_protected, voice_regions, Denoised};
 pub use diagnose::{diagnose, Diagnosis};
 pub use enhance::{enhance, tone_loss, EnhanceReport, EnhanceSettings};
 pub use noise::{learn_noise, subtract_noise, NoiseProfile};
-pub use io::{load, peaks, residual, save, write_preview_wav, Peaks};
+pub use io::{load, peaks, peaks_of, residual, save, write_preview_wav, Peaks};
 pub use quality::{quality_gate, QualityReport, Verdict};
 pub use repair::{repair, RepairSettings};
 pub use reverb::{reverb, ReverbStyle};

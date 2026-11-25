@@ -103,6 +103,9 @@ impl Delay {
 ///
 /// With two channels the left and right reverberation differ, which is what
 /// makes it sound like a space rather than an echo.
+///
+/// The result is longer than the input by the length of the tail, so the
+/// reverberation of the last word dies away instead of being cut off.
 pub fn reverb(audio: &AudioData, style: ReverbStyle, amount: f32) -> AudioData {
     let amount = amount.clamp(0.0, 1.0);
     let Some(preset) = style.preset() else { return audio.clone() };
@@ -129,10 +132,17 @@ pub fn reverb(audio: &AudioData, style: ReverbStyle, amount: f32) -> AudioData {
     let mut dark = [0f32; 8];
     let (mut low_l, mut low_r) = (0f32, 0f32);
 
-    let mut wet = vec![vec![0f32; n]; 2];
+    // Run on after the input ends until the tail has died away.
+    let tail = ((preset.decay + preset.predelay_ms / 1000.0) * sr) as usize;
+    let total = n + tail;
+    let mut wet = vec![vec![0f32; total]; 2];
     let mut outs = [0f32; 8];
-    for i in 0..n {
-        let dry = audio.channels.iter().map(|c| c[i]).sum::<f32>() / n_ch as f32;
+    for i in 0..total {
+        let dry = if i < n {
+            audio.channels.iter().map(|c| c[i]).sum::<f32>() / n_ch as f32
+        } else {
+            0.0
+        };
         let mut x = predelay.read();
         predelay.write(dry);
         for d in &mut diffusers {
@@ -163,7 +173,8 @@ pub fn reverb(audio: &AudioData, style: ReverbStyle, amount: f32) -> AudioData {
     }
 
     // Set the reverberation's level against the voice's, both measured.
-    let power = |x: &[f32]| x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64;
+    // Both over the recording itself, so a long tail does not skew the ratio.
+    let power = |x: &[f32]| x[..n].iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / n as f64;
     let dry_power = audio.channels.iter().map(|c| power(c)).sum::<f64>() / n_ch as f64;
     let wet_power = (power(&wet[0]) + power(&wet[1])) / 2.0;
     if dry_power <= 0.0 || wet_power <= 0.0 {
@@ -177,11 +188,12 @@ pub fn reverb(audio: &AudioData, style: ReverbStyle, amount: f32) -> AudioData {
         .iter()
         .enumerate()
         .map(|(c, ch)| {
-            ch.iter()
-                .enumerate()
-                .map(|(i, s)| {
+            (0..total)
+                .map(|i| {
                     let w = if n_ch == 1 { (wet[0][i] + wet[1][i]) * 0.5 } else { wet[c % 2][i] };
-                    s + w * gain
+                    // The last 50 ms fade to nothing, so the file ends in silence.
+                    let fade = ((total - i) as f32 / (0.05 * sr)).min(1.0);
+                    (ch.get(i).copied().unwrap_or(0.0) + w * gain) * if i < n { 1.0 } else { fade }
                 })
                 .collect()
         })
@@ -236,6 +248,7 @@ mod tests {
         let y = reverb(&a, ReverbStyle::Hall, 0.7);
         let differ = y.channels[0].iter().zip(&y.channels[1]).any(|(l, r)| (l - r).abs() > 1e-4);
         assert!(differ);
-        assert_eq!(y.channels[0].len(), a.channels[0].len());
+        // Longer than the input by the tail: 2.3 s of decay and 28 ms of pre-delay.
+        assert_eq!(y.channels[0].len(), a.channels[0].len() + (2.328f32 * 44_100.0) as usize);
     }
 }
