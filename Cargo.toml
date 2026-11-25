@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/rawnaq-core", "src-tauri"]
+
+# The DeepFilterNet model runs ~10x slower without optimisation, so the audio
+# dependencies are optimised even in `tauri dev`.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.rawnaq-core]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
