@@ -1171,3 +1171,54 @@ button {
   cursor: pointer;
 }
 .eq-band input[type="range"]:disabled { opacity: 0.4; cursor: default; }
+
+/* Small round buttons in the transport: mute, shortcuts. */
+.mini {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  cursor: pointer;
+}
+.mini:hover { color: var(--text); border-color: var(--accent-2); }
+.mini.on { color: var(--accent-2); border-color: rgba(255, 178, 77, 0.6); }
+.mini svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.mini b { font-size: 13px; font-weight: 600; }
+
+/* Shortcut sheet. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+.sheet {
+  width: min(420px, 90vw);
+  padding: 22px 24px 20px;
+  border-radius: 18px;
+  background: var(--surface, #17171a);
+  border: 1px solid var(--line-strong);
+  display: grid;
+  gap: 14px;
+}
+.sheet h3 { margin: 0; font-size: 15px; }
+.sheet dl { margin: 0; display: grid; gap: 7px; }
+.sheet dl div { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.sheet dt {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.sheet dd { margin: 0; font-size: 13px; color: var(--muted); }
+.sheet .btn { justify-self: end; }

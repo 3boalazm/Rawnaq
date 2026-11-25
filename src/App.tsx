@@ -2,6 +2,7 @@ import { useState } from "react";
 import Orb from "./components/Orb";
 import { DenoisePanel, DiagnosePanel, EqPanel, MasterPanel, RepairPanel, SpacePanel } from "./components/Panels";
 import Rail, { type Tool } from "./components/Rail";
+import { SHORTCUTS, useShortcuts } from "./hooks/useShortcuts";
 import Timeline, { type Track } from "./components/Timeline";
 import { useSession } from "./hooks/useSession";
 import { ENGINES, formatTime, STAGE_LABEL, VERDICT } from "./lib/format";
@@ -28,6 +29,8 @@ function levelAt(peaks: Peaks | null | undefined, time: number, duration: number
 export default function App() {
   const s = useSession();
   const [tool, setTool] = useState<Tool>("diagnose");
+  const [help, setHelp] = useState(false);
+  useShortcuts(s, (open) => setHelp((h) => open ?? !h));
   const { loaded, processed, busy, mode } = s;
   const d = loaded?.diagnosis;
   const q = processed?.quality ?? null;
@@ -143,6 +146,25 @@ export default function App() {
                   <span className="listening" dir="rtl">
                     تسمع الآن: <b>{MODE_LABEL[mode]}</b>
                   </span>
+                  <button
+                    className={s.muted || s.volume === 0 ? "mini on" : "mini"}
+                    onClick={s.toggleMute}
+                    aria-pressed={s.muted}
+                    aria-label={s.muted ? "إلغاء الكتم" : "كتم الصوت"}
+                    title={`مستوى الاستماع ${Math.round(s.volume * 100)}% · M للكتم · ↑ ↓ للمستوى`}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" />
+                      {s.muted || s.volume === 0 ? (
+                        <path d="M16 9.5l5 5M21 9.5l-5 5" />
+                      ) : (
+                        <path d={s.volume > 0.5 ? "M15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12" : "M15.5 8.5a5 5 0 0 1 0 7"} />
+                      )}
+                    </svg>
+                  </button>
+                  <button className="mini" onClick={() => setHelp((h) => !h)} aria-expanded={help} aria-label="اختصارات لوحة المفاتيح" title="اختصارات لوحة المفاتيح (?)">
+                    <b>?</b>
+                  </button>
                 </div>
               </>
             )}
@@ -222,6 +244,25 @@ export default function App() {
           </aside>
         )}
       </div>
+
+      {help && (
+        <div className="sheet-backdrop" onClick={() => setHelp(false)}>
+          <div className="sheet" role="dialog" aria-label="اختصارات لوحة المفاتيح" onClick={(e) => e.stopPropagation()}>
+            <h3>اختصارات لوحة المفاتيح</h3>
+            <dl>
+              {SHORTCUTS.map(([keys, what]) => (
+                <div key={keys}>
+                  <dt dir="ltr">{keys}</dt>
+                  <dd>{what}</dd>
+                </div>
+              ))}
+            </dl>
+            <button className="btn" onClick={() => setHelp(false)}>
+              تم
+            </button>
+          </div>
+        </div>
+      )}
 
       <audio {...s.audioProps} />
     </div>

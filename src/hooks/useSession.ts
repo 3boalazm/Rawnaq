@@ -26,6 +26,9 @@ export function useSession() {
   const [mode, setMode] = useState<Mode>("original");
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
+  // Listening level and mute: they change what you hear, never the result.
+  const [volume, setVolumeState] = useState(1);
+  const [muted, setMuted] = useState(false);
   // A light re-run (mix, master) in flight; unlike `busy` it locks nothing.
   const [syncing, setSyncing] = useState(false);
   // Whether the backend holds a denoise result for the applied repair settings.
@@ -198,6 +201,18 @@ export function useSession() {
     else el.pause();
   };
 
+  useEffect(() => {
+    if (!audio.current) return;
+    audio.current.volume = volume;
+    audio.current.muted = muted;
+  }, [volume, muted]);
+
+  const setVolume = (v: number) => {
+    setVolumeState(Math.round(Math.max(0, Math.min(1, v)) * 10) / 10);
+    setMuted(false);
+  };
+  const toggleMute = () => setMuted((m) => !m);
+
   const seek = (t: number) => {
     if (audio.current) audio.current.currentTime = t;
     setTime(t);
@@ -239,7 +254,7 @@ export function useSession() {
 
   return {
     loaded, processed, settings, applied, dirty, busy, syncing, error, notice, deepAvailable,
-    mode, setMode, playing, time,
+    mode, setMode, playing, time, volume, muted, setVolume, toggleMute,
     pickFile, run, exportFile, togglePlay, seek,
     patch, patchEnhance, patchRepair, audioProps,
   };
