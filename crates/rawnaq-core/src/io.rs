@@ -25,8 +25,19 @@ pub fn save(audio: &AudioData, path: &Path) -> Result<()> {
 
 /// 16-bit PCM WAV for in-app playback (every webview can play it).
 pub fn write_preview_wav(audio: &AudioData, path: &Path) -> Result<()> {
+    // Two channels that are the same signal play the same as one, in half the
+    // file: for a long recording that is hundreds of megabytes less to write
+    // and to load every time a setting changes.
+    let sources = crate::mirror_sources(audio);
+    let keep: Vec<&Vec<f32>> = audio
+        .channels
+        .iter()
+        .enumerate()
+        .filter(|(c, _)| sources[*c] == *c)
+        .map(|(_, ch)| ch)
+        .collect();
     let spec = hound::WavSpec {
-        channels: audio.channels.len() as u16,
+        channels: keep.len() as u16,
         sample_rate: audio.sample_rate,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
@@ -34,7 +45,7 @@ pub fn write_preview_wav(audio: &AudioData, path: &Path) -> Result<()> {
     let mut w = hound::WavWriter::create(path, spec)?;
     let len = audio.channels[0].len();
     for i in 0..len {
-        for ch in &audio.channels {
+        for ch in &keep {
             let s = (ch[i].clamp(-1.0, 1.0) * 32767.0).round() as i16;
             w.write_sample(s)?;
         }

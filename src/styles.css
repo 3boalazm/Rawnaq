@@ -1264,3 +1264,19 @@ button {
 }
 .body-amount { display: grid; justify-items: center; gap: 6px; padding-bottom: 6px; }
 .body-amount .fine { text-align: center; }
+
+/* Overall progress while restoring: percent, stage, time left. */
+.restoring {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 76px;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 12px;
+  pointer-events: none;
+  font-size: 13px;
+}
+.restoring b { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent-2); }
+.restoring span { color: var(--text); }
+.restoring small { color: var(--muted); font-size: 12px; }

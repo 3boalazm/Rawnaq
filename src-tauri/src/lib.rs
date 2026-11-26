@@ -6,16 +6,27 @@ use rawnaq_core::{
     denoise_full, detect_voice, diagnose, enhance, learn_noise, load, measure, mix_protected, peaks, peaks_of,
     quality_gate, repair, residual, save, subtract_noise, tone_loss, voice_cut, voice_mask,
     voice_regions,
-    write_preview_wav, AudioData, Denoised, Diagnosis, EnhanceReport, EnhanceSettings, NoiseProfile,
+    write_preview_wav, AudioData, VoiceMask, Denoised, Diagnosis, EnhanceReport, EnhanceSettings, NoiseProfile,
     Peaks, QualityReport, RepairSettings, ToneBalance,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const WAVE_BUCKETS: usize = 1600;
+
+/// Print what the backend is doing, with a clock, when `RAWNAQ_TRACE` is set.
+/// For finding where a long recording spends its time.
+fn trace(what: &str) {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static START: OnceLock<Instant> = OnceLock::new();
+    if std::env::var_os("RAWNAQ_TRACE").is_some() {
+        eprintln!("[{:8.1}s] {what}", START.get_or_init(Instant::now).elapsed().as_secs_f32());
+    }
+}
 
 #[derive(Default)]
 struct Session {
@@ -26,7 +37,74 @@ struct Session {
     analysis: Option<Arc<Analysis>>,
     /// Stage cache: the full-strength denoise of `repaired`, per engine.
     denoised: Vec<(Engine, Arc<Denoised>)>,
+    /// Stage cache: the mix of the denoisers, with everything measured on it.
+    mixed: Option<Arc<Mixed>>,
     output: Option<Arc<AudioData>>,
+}
+
+/// Everything that decides the mix of the denoisers. A change to anything
+/// else (tone, level, equaliser, voice body, reverb) leaves the mix as it was.
+#[derive(Clone, PartialEq)]
+struct MixKey {
+    repair: RepairSettings,
+    denoise: bool,
+    engine: Engine,
+    hiss: f32,
+    strength: f32,
+    protect: f32,
+}
+
+impl MixKey {
+    fn of(s: &Settings) -> Self {
+        Self {
+            repair: s.repair,
+            denoise: s.denoise,
+            engine: s.engine,
+            hiss: s.hiss,
+            strength: s.strength,
+            protect: s.protect,
+        }
+    }
+}
+
+/// The mix and what was worked out from it, kept so that a change to the
+/// mastering alone redoes only the mastering. On a long recording that is the
+/// difference between a few seconds and half a minute.
+struct Mixed {
+    key: MixKey,
+    audio: Arc<AudioData>,
+    quality: Option<QualityReport>,
+    /// What the denoisers took from the voice's lows and highs.
+    loss: (f32, f32),
+    regions: Vec<[f32; 2]>,
+    share: f32,
+    tone: Option<ToneBalance>,
+    removed_preview: String,
+    removed_peak_dbfs: f32,
+    removed_peaks: Peaks,
+}
+
+/// What the worker thread hands back.
+enum Worked {
+    /// Only the mastering was redone, on the cached mix.
+    Light { output: Arc<AudioData>, peaks: Peaks, report: EnhanceReport },
+    Full(Box<Full>),
+}
+
+struct Full {
+    repaired: Arc<AudioData>,
+    analysis: Option<Arc<Analysis>>,
+    denoised: Option<Arc<Denoised>>,
+    mixed: Arc<AudioData>,
+    output: Arc<AudioData>,
+    quality: Option<QualityReport>,
+    removed: AudioData,
+    peaks: Peaks,
+    loss: (f32, f32),
+    regions: Vec<[f32; 2]>,
+    share: f32,
+    tone: Option<ToneBalance>,
+    report: EnhanceReport,
 }
 
 /// The voice and noise detectors' findings for one repaired recording.
@@ -34,7 +112,7 @@ struct Analysis {
     /// Voice score per 10 ms frame, 0..1.
     score: Vec<f32>,
     /// The same, one value per sample.
-    mask: Vec<f32>,
+    mask: VoiceMask,
     noise: NoiseProfile,
     /// The recording with its measured noise floor turned down, full strength.
     clean: AudioData,
@@ -55,6 +133,8 @@ enum Engine {
 #[derive(Default)]
 struct AppState {
     session: Mutex<Session>,
+    /// Set by the Cancel button; the long stages look at it and stop.
+    cancel: Arc<AtomicBool>,
     /// Loaded on first use and kept: loading the model takes seconds.
     mossformer: Arc<Mutex<Option<MossFormer>>>,
     preview_id: AtomicU64,
@@ -182,6 +262,7 @@ async fn load_audio(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<Loaded, String> {
+    trace("load: start");
     let p = PathBuf::from(&path);
     let (audio, diagnosis, pk) = tauri::async_runtime::spawn_blocking({
         let p = p.clone();
@@ -195,7 +276,9 @@ async fn load_audio(
     .await
     .map_err(err)??;
 
+    trace("load: decoded and diagnosed");
     let preview = write_preview(&app, &state, "original", &audio)?;
+    trace("load: preview written");
     *state.session.lock().unwrap() =
         Session { original: Some(Arc::new(audio)), ..Default::default() };
 
@@ -226,11 +309,24 @@ async fn process(
         let denoised = s.denoised.iter().find(|(e, _)| *e == engine).map(|(_, d)| d.clone());
         (original, s.repaired.clone(), s.analysis.clone(), denoised)
     };
+    let key = MixKey::of(&settings);
+    let cached_mixed = state.session.lock().unwrap().mixed.clone().filter(|m| m.key == key);
     let models = models_dir(&app);
     let moss = state.mossformer.clone();
+    let cancel_flag = state.cancel.clone();
+    cancel_flag.store(false, Ordering::Relaxed);
 
     let progress_app = app.clone();
-    let work = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+    let reuse = cached_mixed.clone();
+    let work = tauri::async_runtime::spawn_blocking(move || -> Result<Worked, String> {
+        // Only the mastering changed: master the cached mix again.
+        if let Some(m) = &reuse {
+            trace("process: mastering only");
+            let (output, report) = enhance(&m.audio, &settings.enhance, m.loss);
+            let peaks = peaks_of(&output, WAVE_BUCKETS, m.audio.channels[0].len());
+            return Ok(Worked::Light { output: Arc::new(output), peaks, report });
+        }
+        let cancelled = move || cancel_flag.load(Ordering::Relaxed);
         let progress = move |stage: &str, fraction: f32| {
             let _ = progress_app
                 .emit("progress", ProgressEvent { stage: stage.to_string(), fraction });
@@ -239,8 +335,9 @@ async fn process(
         let (repaired, repair_reused) = match cached_repair {
             Some((s, a)) if s == settings.repair => (a, true),
             _ if settings.repair.any() => {
+                trace("process: repair");
                 progress("repair", 0.0);
-                (Arc::new(repair(&original, &settings.repair, &progress)), false)
+                (Arc::new(repair(&original, &settings.repair, &progress, &cancelled).map_err(err)?), false)
             }
             _ => (original.clone(), false),
         };
@@ -252,9 +349,11 @@ async fn process(
             match cached_analysis {
                 Some(a) if repair_reused => Some(a),
                 _ => {
+                    trace("process: detect voice");
                     progress("detect", 0.0);
                     let score = detect_voice(&repaired).score();
                     let mask = voice_mask(&score, repaired.channels[0].len(), repaired.sample_rate);
+                    trace("process: voice detected, measuring noise");
                     progress("detect", 0.5);
                     let noise = learn_noise(&repaired, &score);
                     let clean = subtract_noise(&repaired, &noise, &score);
@@ -269,16 +368,17 @@ async fn process(
             match cached_denoise {
                 Some(d) if repair_reused => Some(d),
                 _ => {
+                    trace("process: denoise");
                     progress("denoise", 0.0);
                     Some(Arc::new(match engine {
-                        Engine::DeepFilter => denoise_full(&repaired, &progress).map_err(err)?,
+                        Engine::DeepFilter => denoise_full(&repaired, &progress, &cancelled).map_err(err)?,
                         Engine::MossFormer => {
                             let dir = models.as_deref().ok_or("the MossFormer2 model is not installed")?;
                             let mut slot = moss.lock().unwrap();
                             if slot.is_none() {
                                 *slot = Some(MossFormer::load(dir).map_err(err)?);
                             }
-                            let wet = slot.as_mut().unwrap().denoise(&repaired, &progress).map_err(err)?;
+                            let wet = slot.as_mut().unwrap().denoise(&repaired, &progress, &cancelled).map_err(err)?;
                             Denoised { wet, lsnr: Vec::new() }
                         }
                     }))
@@ -286,6 +386,7 @@ async fn process(
             }
         };
 
+        trace("process: denoise done, mixing");
         progress("finish", 0.0);
         // The gate and the "removed" signal describe the denoisers alone, so
         // they are taken before tone and loudness change the level.
@@ -322,21 +423,80 @@ async fn process(
             }
             _ => (repaired.clone(), None, (0.0, 0.0), Vec::new(), 0.0, None),
         };
+        trace("process: mixed, gate and tone measured");
         progress("finish", 0.4);
         let removed = residual(&original, &mixed);
+        trace("process: removed signal computed");
         let (output, report) = enhance(&mixed, &settings.enhance, loss);
         let output = Arc::new(output);
         // The output may run on past the recording (a reverb tail); the track
         // shows the recording's own length so it lines up with the others.
+        trace("process: mastered");
         let pk = peaks_of(&output, WAVE_BUCKETS, mixed.channels[0].len());
-        Ok((repaired, analysis, denoised, output, quality, removed, pk, regions, share, tone, report))
+        Ok(Worked::Full(Box::new(Full {
+            repaired,
+            analysis,
+            denoised,
+            mixed,
+            output,
+            quality,
+            removed,
+            peaks: pk,
+            loss,
+            regions,
+            share,
+            tone,
+            report,
+        })))
     });
-    let (repaired, analysis, denoised, output, quality, removed, pk, regions, share, tone, report) =
-        work.await.map_err(err)??;
+    let worked = work.await.map_err(err)??;
 
+    let full = match worked {
+        Worked::Light { output, peaks, report } => {
+            trace("process: writing the restored preview");
+            let m = cached_mixed.expect("a light run needs the cached mix");
+            let preview = write_preview(&app, &state, "restored", &output)?;
+            let mut s = state.session.lock().unwrap();
+            let noise = s.analysis.as_ref().map(|a| a.noise.clone());
+            s.output = Some(output);
+            return Ok(Processed {
+                peaks,
+                quality: m.quality.clone(),
+                preview,
+                removed_preview: m.removed_preview.clone(),
+                removed_peak_dbfs: m.removed_peak_dbfs,
+                removed_peaks: m.removed_peaks.clone(),
+                voice_regions: m.regions.clone(),
+                voice_share: m.share,
+                noise,
+                tone: m.tone,
+                enhance: report,
+            });
+        }
+        Worked::Full(full) => *full,
+    };
+    let Full {
+        repaired,
+        analysis,
+        denoised,
+        mixed,
+        output,
+        quality,
+        removed,
+        peaks: pk,
+        loss,
+        regions,
+        share,
+        tone,
+        report,
+    } = full;
+
+    trace("process: worker finished, writing previews");
     let preview = write_preview(&app, &state, "restored", &output)?;
+    trace("process: restored preview written");
     let removed_preview = write_preview(&app, &state, "removed", &removed)?;
     let removed_peak_dbfs = peak_dbfs(&removed);
+    trace("process: removed preview written");
     let removed_peaks = peaks(&removed, WAVE_BUCKETS);
 
     let mut s = state.session.lock().unwrap();
@@ -344,6 +504,7 @@ async fn process(
     if !matches!(&s.repaired, Some((r, _)) if *r == settings.repair) {
         s.denoised.clear();
         s.analysis = None;
+        s.mixed = None;
     }
     s.repaired = Some((settings.repair, repaired));
     // Keep the caches when denoising is merely switched off.
@@ -354,6 +515,18 @@ async fn process(
         s.analysis = analysis;
     }
     s.output = Some(output);
+    s.mixed = Some(Arc::new(Mixed {
+        key,
+        audio: mixed,
+        quality: quality.clone(),
+        loss,
+        regions: regions.clone(),
+        share,
+        tone,
+        removed_preview: removed_preview.clone(),
+        removed_peak_dbfs,
+        removed_peaks: removed_peaks.clone(),
+    }));
 
     Ok(Processed {
         peaks: pk,
@@ -384,6 +557,12 @@ fn models_dir(app: &AppHandle) -> Option<PathBuf> {
     find_models(&candidates)
 }
 
+/// Stop the restoration in progress. It stops within a second or two.
+#[tauri::command]
+fn cancel_process(state: State<'_, AppState>) {
+    state.cancel.store(true, Ordering::Relaxed);
+}
+
 #[derive(Serialize)]
 struct Engines {
     /// Whether the MossFormer2 model and ONNX Runtime were found.
@@ -409,7 +588,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![load_audio, process, export_audio, engines])
+        .invoke_handler(tauri::generate_handler![load_audio, process, export_audio, engines, cancel_process])
         .run(tauri::generate_context!())
         .expect("error while running Rawnaq");
 }

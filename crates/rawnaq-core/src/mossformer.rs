@@ -11,19 +11,31 @@
 //! it (Kaldi-style filter bank, deltas, STFT, overlap-add) is done here and
 //! follows ClearerVoice-Studio's `decode_one_audio_mossformer2_se_48k`.
 //!
+//! ## Speed
+//!
+//! The recording is cut into four-second segments that do not depend on one
+//! another, so they are handed out to several workers, each with its own
+//! ONNX Runtime session. That keeps every core busy, which one session spread
+//! over all cores does not: on a laptop CPU with fast and slow cores one big
+//! session spends most of its time waiting for the slowest core. Two channels
+//! that are the same recording (an old mono tape saved as stereo) are
+//! processed once.
+//!
 //! Neither the model (229 MB) nor ONNX Runtime ship in the binary. Both are
 //! looked for in a `models` folder at run time; without them this engine is
 //! simply reported as unavailable.
 
 use crate::resample::resample;
-use crate::Progress;
+use crate::{Cancel, Progress};
 use anyhow::{anyhow, Context, Result};
 use cathar::AudioData;
 use ort::session::Session;
 use ort::value::Tensor;
-use realfft::RealFftPlanner;
+use realfft::num_complex::Complex;
+use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const MODEL_FILE: &str = "mossformer2_48k.onnx";
 pub const RUNTIME_FILE: &str = "onnxruntime.dll";
@@ -51,12 +63,37 @@ pub fn find_models(candidates: &[PathBuf]) -> Option<PathBuf> {
         .cloned()
 }
 
-pub struct MossFormer {
-    session: Session,
+/// Workers and threads per worker. `RAWNAQ_ORT="workers,threads"` overrides it,
+/// for measuring on a new machine.
+fn plan() -> (usize, usize) {
+    if let Some((w, t)) = std::env::var("RAWNAQ_ORT").ok().and_then(|v| {
+        let (w, t) = v.split_once(',')?;
+        Some((w.trim().parse::<usize>().ok()?, t.trim().parse::<usize>().ok()?))
+    }) {
+        return (w.max(1), t.max(1));
+    }
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    // One thread per worker: measured on a 14-thread laptop CPU, six workers of
+    // one thread each ran about twice as fast as one session over all cores
+    // (which stalls waiting for its slowest core), and about as fast as fourteen
+    // while holding less than half the memory: each worker has its own copy of
+    // the model (about 230 MB).
+    ((cores / 2).clamp(1, 6), 1)
+}
+
+/// Everything about the signal processing around the network that does not
+/// change from one segment to the next.
+struct Dsp {
     mel: Vec<Vec<(usize, f32)>>,
-    fbank_window: Vec<f32>,
-    stft_window: Vec<f32>,
-    seed: u64,
+    hamming: Vec<f32>,
+    fbank_fft: Arc<dyn RealToComplex<f32>>,
+    fwd: Arc<dyn RealToComplex<f32>>,
+    inv: Arc<dyn ComplexToReal<f32>>,
+}
+
+pub struct MossFormer {
+    sessions: Vec<Session>,
+    dsp: Dsp,
 }
 
 impl MossFormer {
@@ -73,43 +110,72 @@ impl MossFormer {
             })
             .as_ref()
             .map_err(|e| anyhow!("could not load ONNX Runtime: {e}"))?;
-        let session = Session::builder(env)
-            .map_err(|e| anyhow!("{e}"))?
-            .commit_from_file(dir.join(MODEL_FILE))
-            .map_err(|e| anyhow!("{e}"))
-            .context("could not load the MossFormer2 model")?;
-        let hamming = |n: usize| -> Vec<f32> {
-            (0..n)
-                .map(|i| 0.54 - 0.46 * (std::f32::consts::TAU * i as f32 / (n - 1) as f32).cos())
+        let (workers, threads) = plan();
+        let model = dir.join(MODEL_FILE);
+        // Loading a session takes seconds: load them side by side.
+        let sessions: Vec<Result<Session>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..workers)
+                .map(|_| {
+                    let model = &model;
+                    s.spawn(move || -> Result<Session> {
+                        let builder = Session::builder(env).map_err(|e| anyhow!("{e}"))?;
+                        let mut builder = builder.with_intra_threads(threads).map_err(|e| anyhow!("{e}"))?;
+                        builder
+                            .commit_from_file(model)
+                            .map_err(|e| anyhow!("{e}"))
+                            .context("could not load the MossFormer2 model")
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err(anyhow!("model loading panicked"))))
                 .collect()
-        };
-        Ok(Self {
-            session,
+        });
+        let sessions = sessions.into_iter().collect::<Result<Vec<_>>>()?;
+
+        let mut planner = RealFftPlanner::<f32>::new();
+        let hamming =
+            (0..WIN).map(|i| 0.54 - 0.46 * (std::f32::consts::TAU * i as f32 / (WIN - 1) as f32).cos()).collect();
+        let dsp = Dsp {
             mel: mel_bank(),
-            fbank_window: hamming(WIN),
-            stft_window: hamming(WIN),
-            seed: 0x9e37_79b9_7f4a_7c15,
-        })
+            hamming,
+            fbank_fft: planner.plan_fft_forward(FBANK_FFT),
+            fwd: planner.plan_fft_forward(WIN),
+            inv: planner.plan_fft_inverse(WIN),
+        };
+        Ok(Self { sessions, dsp })
     }
 
     /// Denoise at full strength. The result has the input's rate and length.
-    pub fn denoise(&mut self, audio: &AudioData, progress: Progress) -> Result<AudioData> {
+    pub fn denoise(&mut self, audio: &AudioData, progress: Progress, cancel: Cancel) -> Result<AudioData> {
         let sr = audio.sample_rate;
-        let n_ch = audio.channels.len().max(1);
-        let mut channels = Vec::with_capacity(n_ch);
+        let sources = crate::mirror_sources(audio);
+        let unique = sources.iter().enumerate().filter(|(c, s)| *c == **s).count().max(1);
+        let mut done: Vec<Option<Vec<f32>>> = vec![None; audio.channels.len()];
+        let mut seen = 0usize;
         for (c, ch) in audio.channels.iter().enumerate() {
+            if sources[c] != c {
+                continue; // a copy of an earlier channel, filled in below
+            }
             let x = resample(ch, sr, SR);
-            let report = |f: f32| progress("denoise", ((c as f32 + f) / n_ch as f32).min(0.99));
-            let y = self.channel(&x, &report)?;
+            let base = seen as f32;
+            let report = |f: f32| progress("denoise", ((base + f) / unique as f32).min(0.99));
+            let y = self.channel(&x, &report, cancel)?;
+            drop(x);
             let mut out = resample(&y, SR, sr);
             out.resize(ch.len(), 0.0);
-            channels.push(out);
+            done[c] = Some(out);
+            seen += 1;
         }
+        let channels = (0..audio.channels.len())
+            .map(|c| done[sources[c]].clone().expect("every source channel was processed"))
+            .collect();
         progress("denoise", 1.0);
         Ok(AudioData { sample_rate: sr, channels })
     }
 
-    fn channel(&mut self, x: &[f32], report: &dyn Fn(f32)) -> Result<Vec<f32>> {
+    fn channel(&mut self, x: &[f32], report: &(dyn Fn(f32) + Sync), cancel: Cancel) -> Result<Vec<f32>> {
         let n = x.len();
         // Pad so the segments tile the signal exactly.
         let padded_len = if n < SEGMENT + STRIDE {
@@ -119,47 +185,89 @@ impl MossFormer {
         };
         let mut audio: Vec<f32> = x.iter().map(|s| s * INT16).collect();
         audio.resize(padded_len, 0.0);
-        let mut out = vec![0f32; padded_len];
-        let mut start = 0;
-        while start + SEGMENT <= padded_len {
-            let seg = self.segment(&audio[start..start + SEGMENT])?;
-            let from = if start == 0 { 0 } else { GIVE_UP };
-            out[start + from..start + SEGMENT - GIVE_UP]
-                .copy_from_slice(&seg[from..SEGMENT - GIVE_UP]);
-            start += STRIDE;
-            report(start as f32 / padded_len as f32);
+        let segments = (padded_len - SEGMENT) / STRIDE + 1;
+
+        let out = Mutex::new(vec![0f32; padded_len]);
+        let next = AtomicUsize::new(0);
+        let finished = AtomicUsize::new(0);
+        let failure: Mutex<Option<anyhow::Error>> = Mutex::new(None);
+        let Self { sessions, dsp } = self;
+
+        std::thread::scope(|scope| {
+            for (w, session) in sessions.iter_mut().enumerate() {
+                let (audio, out, next, finished, failure) = (&audio, &out, &next, &finished, &failure);
+                let dsp = &*dsp;
+                scope.spawn(move || {
+                    let mut rng = 0x9e37_79b9_7f4a_7c15u64 ^ ((w as u64 + 1) << 32);
+                    loop {
+                        let k = next.fetch_add(1, Ordering::Relaxed);
+                        if k >= segments || failure.lock().unwrap().is_some() {
+                            break;
+                        }
+                        if cancel() {
+                            *failure.lock().unwrap() = Some(anyhow!("cancelled"));
+                            break;
+                        }
+                        let start = k * STRIDE;
+                        match dsp.segment(session, &audio[start..start + SEGMENT], &mut rng) {
+                            Ok(seg) => {
+                                // Segments keep their middle three seconds, which
+                                // tile the signal without overlap.
+                                let from = if k == 0 { 0 } else { GIVE_UP };
+                                let mut out = out.lock().unwrap();
+                                out[start + from..start + SEGMENT - GIVE_UP]
+                                    .copy_from_slice(&seg[from..SEGMENT - GIVE_UP]);
+                            }
+                            Err(e) => {
+                                *failure.lock().unwrap() = Some(e);
+                                break;
+                            }
+                        }
+                        let d = finished.fetch_add(1, Ordering::Relaxed) + 1;
+                        report(d as f32 / segments as f32);
+                    }
+                });
+            }
+        });
+        if let Some(e) = failure.into_inner().unwrap() {
+            return Err(e);
         }
+        let mut out = out.into_inner().unwrap();
         out.truncate(n);
         out.iter_mut().for_each(|s| *s /= INT16);
         Ok(out)
     }
+}
 
+impl Dsp {
     /// One four-second segment at integer scale, in and out.
-    fn segment(&mut self, seg: &[f32]) -> Result<Vec<f32>> {
+    fn segment(&self, session: &mut Session, seg: &[f32], rng: &mut u64) -> Result<Vec<f32>> {
         let frames = 1 + (seg.len() - WIN) / HOP;
-        let feats = self.features(seg, frames);
+        let feats = self.features(seg, frames, rng);
         let input = Tensor::from_array(([1usize, frames, MELS * 3], feats)).map_err(|e| anyhow!("{e}"))?;
-        let outputs = self.session.run(ort::inputs![input]).map_err(|e| anyhow!("{e}"))?;
+        let outputs = session.run(ort::inputs![input]).map_err(|e| anyhow!("{e}"))?;
         let (shape, mask) = outputs[0].try_extract_tensor::<f32>().map_err(|e| anyhow!("{e}"))?;
         if shape.len() != 3 || shape[1] as usize != frames || shape[2] as usize != BINS {
             return Err(anyhow!("unexpected mask shape {shape:?}"));
         }
 
         // Mask the spectrum and overlap-add it back.
-        let mut planner = RealFftPlanner::<f32>::new();
-        let (fwd, inv) = (planner.plan_fft_forward(WIN), planner.plan_fft_inverse(WIN));
-        let (mut buf, mut spec) = (fwd.make_input_vec(), fwd.make_output_vec());
+        let (mut buf, mut spec) = (self.fwd.make_input_vec(), self.fwd.make_output_vec());
+        let mut inverse_in = self.inv.make_input_vec();
+        let mut inverse_out = self.inv.make_output_vec();
         let mut out = vec![0f32; seg.len()];
         let mut envelope = vec![0f32; seg.len()];
-        let w = &self.stft_window;
+        let w = &self.hamming;
         for t in 0..frames {
             let at = t * HOP;
             buf.iter_mut().zip(&seg[at..]).zip(w).for_each(|((b, s), w)| *b = s * w);
-            let _ = fwd.process(&mut buf, &mut spec);
-            spec.iter_mut().zip(&mask[t * BINS..]).for_each(|(x, m)| *x *= *m);
-            let _ = inv.process(&mut spec, &mut buf);
+            let _ = self.fwd.process(&mut buf, &mut spec);
+            for ((o, x), m) in inverse_in.iter_mut().zip(&spec).zip(&mask[t * BINS..]) {
+                *o = Complex::new(x.re * m, x.im * m);
+            }
+            let _ = self.inv.process(&mut inverse_in, &mut inverse_out);
             for i in 0..WIN {
-                out[at + i] += buf[i] / WIN as f32 * w[i];
+                out[at + i] += inverse_out[i] / WIN as f32 * w[i];
                 envelope[at + i] += w[i] * w[i];
             }
         }
@@ -169,15 +277,14 @@ impl MossFormer {
 
     /// Kaldi-style log-mel filter bank with first and second deltas:
     /// `frames × 180`, row by row.
-    fn features(&mut self, seg: &[f32], frames: usize) -> Vec<f32> {
-        let fft = RealFftPlanner::<f32>::new().plan_fft_forward(FBANK_FFT);
-        let (mut buf, mut spec) = (fft.make_input_vec(), fft.make_output_vec());
+    fn features(&self, seg: &[f32], frames: usize, rng: &mut u64) -> Vec<f32> {
+        let (mut buf, mut spec) = (self.fbank_fft.make_input_vec(), self.fbank_fft.make_output_vec());
         let mut fbank = vec![0f32; frames * MELS];
         let mut frame = vec![0f32; WIN];
         for t in 0..frames {
             frame.copy_from_slice(&seg[t * HOP..t * HOP + WIN]);
             // Dither, as in training: without it digital silence is log(0).
-            frame.iter_mut().for_each(|s| *s += self.gauss());
+            frame.iter_mut().for_each(|s| *s += gauss(rng));
             let mean = frame.iter().sum::<f32>() / WIN as f32;
             frame.iter_mut().for_each(|s| *s -= mean);
             for i in (1..WIN).rev() {
@@ -185,8 +292,8 @@ impl MossFormer {
             }
             frame[0] -= 0.97 * frame[0];
             buf.fill(0.0);
-            buf.iter_mut().zip(&frame).zip(&self.fbank_window).for_each(|((b, s), w)| *b = s * w);
-            let _ = fft.process(&mut buf, &mut spec);
+            buf.iter_mut().zip(&frame).zip(&self.hamming).for_each(|((b, s), w)| *b = s * w);
+            let _ = self.fbank_fft.process(&mut buf, &mut spec);
             for (m, taps) in self.mel.iter().enumerate() {
                 let e: f32 = taps.iter().map(|(k, w)| spec[*k].norm_sqr() * w).sum();
                 fbank[t * MELS + m] = e.max(f32::EPSILON).ln();
@@ -202,18 +309,18 @@ impl MossFormer {
         }
         feats
     }
+}
 
-    /// A standard normal sample (xorshift + Box–Muller).
-    fn gauss(&mut self) -> f32 {
-        let mut next = || {
-            self.seed ^= self.seed << 13;
-            self.seed ^= self.seed >> 7;
-            self.seed ^= self.seed << 17;
-            ((self.seed >> 40) as f32 + 1.0) / (1u64 << 24) as f32
-        };
-        let (u, v) = (next(), next());
-        (-2.0 * u.ln()).sqrt() * (std::f32::consts::TAU * v).cos()
-    }
+/// A standard normal sample (xorshift + Box–Muller).
+fn gauss(seed: &mut u64) -> f32 {
+    let mut next = || {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        ((*seed >> 40) as f32 + 1.0) / (1u64 << 24) as f32
+    };
+    let (u, v) = (next(), next());
+    (-2.0 * u.ln()).sqrt() * (std::f32::consts::TAU * v).cos()
 }
 
 /// Triangular filters, evenly spaced on the mel scale from 20 Hz to Nyquist:

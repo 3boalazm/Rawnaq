@@ -119,3 +119,35 @@ export function formatTime(t: number) {
 }
 
 export const signed = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+
+/**
+ * How much of the whole restoration each stage is, by engine, measured on a
+ * 43-minute recording. The stage bar restarts at zero for every stage, which
+ * reads as "stuck"; this puts all of them on one bar.
+ */
+const STAGE_ORDER = ["repair", "detect", "denoise", "finish"];
+const STAGE_WEIGHTS: Record<Engine, number[]> = {
+  deepfilter: [0.2, 0.1, 0.5, 0.2],
+  mossformer: [0.04, 0.03, 0.86, 0.07],
+};
+
+/** Progress of the whole restoration, 0..1, or null while loading a file. */
+export function overallProgress(stage: string, fraction: number, engine: Engine): number | null {
+  const i = STAGE_ORDER.indexOf(stage);
+  if (i < 0) return null;
+  const w = STAGE_WEIGHTS[engine];
+  const before = w.slice(0, i).reduce((a, b) => a + b, 0);
+  return Math.min(0.99, before + w[i] * Math.max(0, Math.min(1, fraction)));
+}
+
+/** "حوالي 9 دقائق" from how far along it is and how long it has taken. */
+export function remaining(overall: number | null, elapsedMs: number): string | null {
+  // Too early to tell: the first seconds say nothing about the rest.
+  if (overall === null || overall < 0.03 || elapsedMs < 15_000) return null;
+  const sec = (elapsedMs / 1000) * ((1 - overall) / overall);
+  if (sec < 45) return "أقل من دقيقة";
+  const min = Math.round(sec / 60);
+  if (min < 60) return `حوالي ${min} ${min === 1 ? "دقيقة" : min <= 10 ? "دقائق" : "دقيقة"}`;
+  const h = Math.floor(min / 60);
+  return `حوالي ${h} ${h === 1 ? "ساعة" : h === 2 ? "ساعتين" : "ساعات"}${min % 60 ? ` و${min % 60} دقيقة` : ""}`;
+}

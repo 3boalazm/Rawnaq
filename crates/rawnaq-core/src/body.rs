@@ -15,6 +15,7 @@
 //! the start, so the first few percent already change what you hear: turning
 //! the control up a little never does nothing.
 
+use crate::voice::{voiced_energy, VoiceMask};
 use cathar::{bass, equalizer, highpass, lowpass, treble, AudioData};
 use serde::{Deserialize, Serialize};
 
@@ -52,16 +53,14 @@ pub struct ToneBalance {
 const THIN_BELOW_DB: f32 = -7.0;
 const BOOMY_ABOVE_DB: f32 = 2.0;
 
-pub fn measure(audio: &AudioData, mask: &[f32]) -> Option<ToneBalance> {
+pub fn measure(audio: &AudioData, mask: &VoiceMask) -> Option<ToneBalance> {
     let sr = audio.sample_rate;
-    let voiced = mask.iter().filter(|m| **m > 0.5).count();
+    let voiced = mask.frames().iter().filter(|m| **m > 0.5).count() * mask.hop();
     // Under two seconds of voice says nothing about its tone.
     if voiced < sr as usize * 2 {
         return None;
     }
-    let energy = |x: &[f32]| -> f64 {
-        x.iter().zip(mask).filter(|(_, m)| **m > 0.5).map(|(s, _)| (*s as f64).powi(2)).sum()
-    };
+    let energy = |x: &[f32]| voiced_energy(x, mask);
     let has_high = sr as f32 / 2.0 > 3000.0 * 1.5;
     let (mut low, mut mid, mut high) = (0f64, 0f64, 0f64);
     for ch in &audio.channels {
@@ -312,7 +311,7 @@ mod tests {
 
     #[test]
     fn measure_tells_thin_from_heavy() {
-        let mask = vec![1.0; SR as usize * 4];
+        let mask = VoiceMask::new(vec![1.0; 400], SR);
         let heavy = audio(mix(&[tone(150.0, 0.4, 4.0), tone(900.0, 0.1, 4.0)]));
         let thin = audio(mix(&[tone(150.0, 0.005, 4.0), tone(900.0, 0.1, 4.0)]));
         let h = measure(&heavy, &mask).unwrap();
@@ -320,6 +319,6 @@ mod tests {
         assert!(h.low_mid_db > t.low_mid_db + 20.0);
         assert_eq!(h.verdict, "boomy");
         assert_eq!(t.verdict, "thin");
-        assert!(measure(&heavy, &vec![0.0; SR as usize * 4]).is_none());
+        assert!(measure(&heavy, &VoiceMask::new(vec![0.0; 400], SR)).is_none());
     }
 }

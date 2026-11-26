@@ -9,6 +9,8 @@ import type { Loaded, Mode, Processed, Settings } from "../types";
 export interface Busy {
   stage: string;
   fraction: number;
+  /** When it started, ms since the epoch, for the time remaining. */
+  startedAt: number;
 }
 
 /**
@@ -76,7 +78,9 @@ export function useSession() {
   }, []);
 
   useEffect(() => {
-    const un = listen<Busy>("progress", (e) => setBusy((b) => (b ? e.payload : b)));
+    const un = listen<{ stage: string; fraction: number }>("progress", (e) =>
+      setBusy((b) => (b ? { ...e.payload, startedAt: b.startedAt } : b)),
+    );
     return () => {
       un.then((f) => f());
     };
@@ -85,7 +89,7 @@ export function useSession() {
   const loadPath = useCallback(async (path: string) => {
     setError(null);
     setNotice(null);
-    setBusy({ stage: "load", fraction: 0 });
+    setBusy({ stage: "load", fraction: 0, startedAt: Date.now() });
     if (audio.current) {
       // A new recording starts from the beginning, not where the last one was.
       audio.current.pause();
@@ -134,7 +138,7 @@ export function useSession() {
     const first = applied === null;
     setError(null);
     setNotice(null);
-    setBusy({ stage: "repair", fraction: 0 });
+    setBusy({ stage: "repair", fraction: 0, startedAt: Date.now() });
     try {
       const result = await invoke<Processed>("process", { settings: s });
       setProcessed(result);
@@ -145,10 +149,16 @@ export function useSession() {
       // Only the first run moves you to the result; later you stay on your track.
       if (first) setMode("restored");
     } catch (e) {
-      setError(String(e));
+      // Cancelling is a choice, not a failure.
+      if (!String(e).includes("cancelled")) setError(String(e));
     } finally {
       setBusy(null);
     }
+  };
+
+  /** Stop the restoration in progress; the previous result, if any, stays. */
+  const cancel = () => {
+    invoke("cancel_process").catch(() => {});
   };
 
   // Apply live changes shortly after the last one, so turning a knob settles
@@ -255,7 +265,7 @@ export function useSession() {
   return {
     loaded, processed, settings, applied, dirty, busy, syncing, error, notice, deepAvailable,
     mode, setMode, playing, time, volume, muted, setVolume, toggleMute,
-    pickFile, run, exportFile, togglePlay, seek,
+    pickFile, run, cancel, exportFile, togglePlay, seek,
     patch, patchEnhance, patchRepair, audioProps,
   };
 }

@@ -81,11 +81,34 @@ rustup override set stable-x86_64-pc-windows-gnu
 Run cargo from PowerShell or cmd, not Git Bash: Git Bash puts its own `link`
 ahead of the real linker.
 
+## Long recordings
+
+Three things used to make an hour-long recording look hung, and are fixed:
+
+- Cathar's declicker copies the whole signal for every click it mends, so its
+  time grew with the square of the length (10 min took 38 s, an hour would
+  have taken most of half an hour). Repair now works on 20-second pieces with
+  a little context, side by side.
+- One ONNX session spread over all cores stalls on a CPU with fast and slow
+  cores. The deep engine now runs several single-thread workers over
+  independent four-second segments (`RAWNAQ_ORT="workers,threads"` overrides
+  the layout).
+- Two channels that are the same signal (old mono tapes saved as stereo) are
+  repaired, denoised and mastered once.
+
+The progress bar covers the whole restoration with a time estimate, and the
+Cancel button stops it. `RAWNAQ_TRACE=1` prints where the time goes.
+
 ## Limits of this version
 
 - CPU only. No GPU path, no hardware detection, no model downloads yet.
-- The whole recording is held in memory, several copies of it. Expect roughly
-  1 GB of RAM per 30 minutes of mono audio.
+- The whole recording is held in memory, several copies of it. A one-hour
+  stereo recording peaked at about 12 GB of RAM with the deep engine, so a
+  machine with 8 GB will not manage it.
+- Time on a laptop CPU (14 threads), measured with the deep engine: about 8 min
+  for 43 min of audio and about 13 min for one hour. The fast engine is
+  several times quicker. Changing the mastering (tone, level, equaliser,
+  voice body, reverb) afterwards redoes only the mastering.
 - The quality gate is a heuristic with thresholds that have not been calibrated
   on real recitations. Trust your ears on the "removed" signal first.
 - DeepFilterNet was trained on ordinary speech, not on recitation. On old or

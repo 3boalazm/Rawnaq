@@ -7,6 +7,7 @@
 
 use crate::body::{body, BodyStyle};
 use crate::reverb::{reverb, ReverbStyle};
+use crate::voice::{voiced_energy, VoiceMask};
 use cathar::{bass, equalizer, highpass, integrated_loudness, lowpass, treble, AudioData};
 use serde::{Deserialize, Serialize};
 
@@ -94,15 +95,10 @@ fn db(e_in: f64, e_out: f64) -> f32 {
     (10.0 * (e_in / e_out.max(1e-20)).log10()).clamp(-60.0, 60.0) as f32
 }
 
-/// Energy of `x` where the voice mask is on.
-fn voiced_energy(x: &[f32], mask: &[f32]) -> f64 {
-    x.iter().zip(mask).filter(|(_, m)| **m > 0.5).map(|(s, _)| (*s as f64).powi(2)).sum()
-}
-
 /// How much more the lows and highs of the voice dropped than the voice as a
 /// whole, comparing the denoiser's input and output inside the voice mask.
 /// Returns `(low, high)` in dB; positive = that band lost more.
-pub fn tone_loss(before: &AudioData, after: &AudioData, mask: &[f32]) -> (f32, f32) {
+pub fn tone_loss(before: &AudioData, after: &AudioData, mask: &VoiceMask) -> (f32, f32) {
     let sr = before.sample_rate;
     let has_high = sr as f32 / 2.0 > HIGH_HZ * 1.5;
     let (mut all, mut low, mut high) = ((0f64, 0f64), (0f64, 0f64), (0f64, 0f64));
@@ -134,32 +130,50 @@ pub fn enhance(audio: &AudioData, s: &EnhanceSettings, loss: (f32, f32)) -> (Aud
         report.high_gain_db = 0.0;
     }
 
-    let mut channels: Vec<Vec<f32>> = audio
-        .channels
-        .iter()
-        .map(|ch| {
-            let mut x = ch.clone();
-            if report.low_gain_db.abs() > 0.05 {
-                x = bass(&x, sr, LOW_HZ, report.low_gain_db);
+    // The tone shaping of one channel. Channels do not depend on each other, so
+    // they run side by side, and a channel that is a copy of another (an old
+    // mono recording saved as stereo) is shaped once and copied.
+    let shape = |ch: &Vec<f32>| -> Vec<f32> {
+        let mut x = ch.clone();
+        if report.low_gain_db.abs() > 0.05 {
+            x = bass(&x, sr, LOW_HZ, report.low_gain_db);
+        }
+        if report.high_gain_db.abs() > 0.05 {
+            x = treble(&x, sr, HIGH_HZ, report.high_gain_db);
+        }
+        for (band, (hz, gain)) in EQ_HZ.iter().zip(s.eq_db).enumerate() {
+            let gain = gain.clamp(-12.0, 12.0);
+            // A band above what the recording can hold has nothing to act on.
+            if gain.abs() < 0.05 || *hz >= sr as f32 * 0.45 {
+                continue;
             }
-            if report.high_gain_db.abs() > 0.05 {
-                x = treble(&x, sr, HIGH_HZ, report.high_gain_db);
-            }
-            for (band, (hz, gain)) in EQ_HZ.iter().zip(s.eq_db).enumerate() {
-                let gain = gain.clamp(-12.0, 12.0);
-                // A band above what the recording can hold has nothing to act on.
-                if gain.abs() < 0.05 || *hz >= sr as f32 * 0.45 {
-                    continue;
-                }
-                x = match band {
-                    0 => bass(&x, sr, *hz, gain),
-                    4 => treble(&x, sr, *hz, gain),
-                    _ => equalizer(&x, sr, *hz, 1.0, gain),
-                };
-            }
-            x
-        })
-        .collect();
+            x = match band {
+                0 => bass(&x, sr, *hz, gain),
+                4 => treble(&x, sr, *hz, gain),
+                _ => equalizer(&x, sr, *hz, 1.0, gain),
+            };
+        }
+        x
+    };
+    let sources = crate::mirror_sources(audio);
+    let mut channels: Vec<Vec<f32>> = vec![Vec::new(); audio.channels.len()];
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = audio
+            .channels
+            .iter()
+            .enumerate()
+            .filter(|(c, _)| sources[*c] == *c)
+            .map(|(c, ch)| (c, scope.spawn(|| shape(ch))))
+            .collect();
+        for (c, h) in handles {
+            channels[c] = h.join().expect("tone shaping panicked");
+        }
+    });
+    for c in 0..channels.len() {
+        if sources[c] != c {
+            channels[c] = channels[sources[c]].clone();
+        }
+    }
 
     // After the tone shaping so the preset works on the final balance, before
     // the reverberation so the space is not thickened or squashed with it.

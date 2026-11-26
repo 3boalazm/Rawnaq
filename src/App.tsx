@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Orb from "./components/Orb";
 import { DenoisePanel, DiagnosePanel, EqPanel, MasterPanel, RepairPanel, SpacePanel } from "./components/Panels";
 import Rail, { type Tool } from "./components/Rail";
 import { SHORTCUTS, useShortcuts } from "./hooks/useShortcuts";
 import Timeline, { type Track } from "./components/Timeline";
 import { useSession } from "./hooks/useSession";
-import { ENGINES, formatTime, STAGE_LABEL, VERDICT } from "./lib/format";
+import { ENGINES, formatTime, overallProgress, remaining, STAGE_LABEL, VERDICT } from "./lib/format";
 import type { Peaks } from "./types";
 
 const TOOL_TITLE: Record<Tool, [string, string]> = {
@@ -43,6 +43,17 @@ export default function App() {
   const activePeaks = tracks.find((t) => t.id === mode)?.peaks;
 
   const tone = q ? q.verdict : "idle";
+  // One bar for the whole restoration, and how long is left.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [!!busy]);
+  const overall = busy ? overallProgress(busy.stage, busy.fraction, s.settings.engine) : null;
+  const left = busy ? remaining(overall, now - busy.startedAt) : null;
+  const restoring = !!busy && busy.stage !== "load";
+
   const runLabel = busy
     ? `${STAGE_LABEL[busy.stage] ?? busy.stage}…`
     : !s.applied
@@ -171,7 +182,14 @@ export default function App() {
 
             {busy && (
               <div className="progress" role="status" aria-label={STAGE_LABEL[busy.stage] ?? busy.stage}>
-                <div style={{ width: `${Math.round(busy.fraction * 100)}%` }} />
+                <div style={{ width: `${Math.round((overall ?? busy.fraction) * 100)}%` }} />
+              </div>
+            )}
+            {restoring && (
+              <div className="restoring" role="status">
+                <b dir="ltr">{Math.round((overall ?? 0) * 100)}%</b>
+                <span>{STAGE_LABEL[busy!.stage] ?? busy!.stage}</span>
+                <small>{left ? `متبقي ${left}` : "جارٍ تقدير الوقت…"}</small>
               </div>
             )}
             {!busy && s.syncing && (
@@ -228,9 +246,15 @@ export default function App() {
                   );
                 })}
               </div>
-              <button className="btn primary big" onClick={s.run} disabled={!!busy}>
-                {runLabel}
-              </button>
+              {restoring ? (
+                <button className="btn big" onClick={s.cancel}>
+                  إلغاء الترميم
+                </button>
+              ) : (
+                <button className="btn primary big" onClick={s.run} disabled={!!busy}>
+                  {runLabel}
+                </button>
+              )}
               <span className="fine">
                 {!s.applied
                   ? "الإعدادات مقترحة حسب التشخيص."

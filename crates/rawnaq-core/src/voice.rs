@@ -211,23 +211,64 @@ pub fn voice_cut(dry: &AudioData, wet: &AudioData, score: &[f32]) -> Vec<f32> {
         .collect()
 }
 
-/// Stretch a per-frame score to one value per sample.
-pub fn voice_mask(score: &[f32], n_samples: usize, sample_rate: u32) -> Vec<f32> {
-    let n_frames = score.len();
-    if n_frames == 0 {
-        return vec![0.0; n_samples];
+/// Where the voice is, kept as one value per 10 ms frame and read as if it were
+/// one value per sample. Stored per sample it would take as much memory as the
+/// recording itself (half a gigabyte for 43 minutes); per frame it is a few
+/// hundred kilobytes.
+#[derive(Debug, Clone, Default)]
+pub struct VoiceMask {
+    frames: Vec<f32>,
+    /// Samples per frame.
+    hop: f32,
+}
+
+impl VoiceMask {
+    pub fn new(frames: Vec<f32>, sample_rate: u32) -> Self {
+        Self { frames, hop: sample_rate as f32 / FRAME_RATE as f32 }
     }
-    // Linear interpolation between frame centres.
-    let hop = sample_rate as f32 / FRAME_RATE as f32;
-    (0..n_samples)
-        .map(|i| {
-            let pos = (i as f32 / hop - 0.5).max(0.0);
-            let f = (pos as usize).min(n_frames - 1);
-            let g = (f + 1).min(n_frames - 1);
-            let frac = pos - f as f32;
-            score[f] * (1.0 - frac) + score[g] * frac
+
+    /// The value at sample `i`, interpolated between frame centres.
+    pub fn at(&self, i: usize) -> f32 {
+        let n = self.frames.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let pos = (i as f32 / self.hop - 0.5).max(0.0);
+        let f = (pos as usize).min(n - 1);
+        let g = (f + 1).min(n - 1);
+        let frac = pos - f as f32;
+        self.frames[f] * (1.0 - frac) + self.frames[g] * frac
+    }
+
+    /// One value per 10 ms.
+    pub fn frames(&self) -> &[f32] {
+        &self.frames
+    }
+
+    /// Samples per frame.
+    pub fn hop(&self) -> usize {
+        self.hop as usize
+    }
+}
+
+/// Build the mask from a per-frame score. `n_samples` is the length the mask
+/// will be read over; it is no longer needed to build it.
+pub fn voice_mask(score: &[f32], _n_samples: usize, sample_rate: u32) -> VoiceMask {
+    VoiceMask::new(score.to_vec(), sample_rate)
+}
+
+/// Energy of `x` where the voice is on (frames above one half).
+pub fn voiced_energy(x: &[f32], mask: &VoiceMask) -> f64 {
+    let hop = mask.hop().max(1);
+    mask.frames()
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| **v > 0.5)
+        .map(|(f, _)| {
+            let (a, b) = (f * hop, ((f + 1) * hop).min(x.len()));
+            x.get(a..b).map_or(0.0, |s| s.iter().map(|v| (*v as f64).powi(2)).sum::<f64>())
         })
-        .collect()
+        .sum()
 }
 
 /// Second-order Butterworth high-pass.

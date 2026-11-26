@@ -12,6 +12,15 @@ use std::time::Instant;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("repairrun") {
+        return repairrun(&args[2], args[3].parse()?);
+    }
+    if args.get(1).map(String::as_str) == Some("repairtime") {
+        return repairtime(&args[2], args[3].parse()?);
+    }
+    if args.get(1).map(String::as_str) == Some("loadtest") {
+        return loadtest(&args[2]);
+    }
     if args.get(1).map(String::as_str) == Some("tone") {
         return tone(&args[2]);
     }
@@ -48,13 +57,13 @@ fn main() -> Result<()> {
     let d = diagnose(&original);
     println!("diagnosis: {}", serde_json::to_string(&d)?);
 
-    let repaired = repair(&original, &RepairSettings::default(), &no_progress);
+    let repaired = repair(&original, &RepairSettings::default(), &no_progress, &never_cancel)?;
     let score = detect_voice(&repaired).score();
     let profile = learn_noise(&repaired, &score);
     println!("noise: {}", serde_json::to_string(&profile)?);
     let clean = subtract_noise(&repaired, &profile, &score);
     println!("voice and noise done at {:.1}s", t.elapsed().as_secs_f32());
-    let den = denoise_full(&repaired, &no_progress)?;
+    let den = denoise_full(&repaired, &no_progress, &never_cancel)?;
     println!("denoise done at {:.1}s", t.elapsed().as_secs_f32());
 
     let mask = voice_mask(&score, repaired.channels[0].len(), repaired.sample_rate);
@@ -82,7 +91,7 @@ fn probe(input: &str, with_denoiser: bool) -> Result<()> {
     let audio = load(Path::new(input))?;
     let track = voice::detect_voice(&audio);
     println!("detect_voice: {} frames in {:.1}s", track.len(), t.elapsed().as_secs_f32());
-    let lsnr = if with_denoiser { denoise_full(&audio, &no_progress)?.lsnr } else { Vec::new() };
+    let lsnr = if with_denoiser { denoise_full(&audio, &no_progress, &never_cancel)?.lsnr } else { Vec::new() };
     let share = |v: &[f32], th: f32| v.iter().filter(|x| **x >= th).count() as f32 / v.len().max(1) as f32;
     let score = track.score();
     println!(
@@ -126,11 +135,11 @@ fn bands(input: &str) -> Result<()> {
     const N: usize = 2048;
     const EDGES: [f32; 7] = [0.0, 80.0, 300.0, 1000.0, 3000.0, 8000.0, 1e9];
     let original = load(Path::new(input))?;
-    let audio = repair(&original, &RepairSettings::default(), &no_progress);
+    let audio = repair(&original, &RepairSettings::default(), &no_progress, &never_cancel)?;
     let score = detect_voice(&audio).score();
     let profile = learn_noise(&audio, &score);
     let clean = subtract_noise(&audio, &profile, &score);
-    let wet = denoise_full(&audio, &no_progress)?.wet;
+    let wet = denoise_full(&audio, &no_progress, &never_cancel)?.wet;
     let sr = audio.sample_rate as f32;
     let fft = RealFftPlanner::<f32>::new().plan_fft_forward(N);
     let win: Vec<f32> = (0..N).map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / N as f32).cos()).collect();
@@ -294,7 +303,7 @@ fn moss(models: &str, input: &str, output: &str) -> Result<()> {
     let mut engine = mossformer::MossFormer::load(Path::new(models))?;
     println!("model loaded in {:.1}s", t.elapsed().as_secs_f32());
     let t = Instant::now();
-    let out = engine.denoise(&audio, &no_progress)?;
+    let out = engine.denoise(&audio, &no_progress, &never_cancel)?;
     let secs = audio.channels[0].len() as f32 / audio.sample_rate as f32;
     println!("{secs:.1}s of audio in {:.1}s", t.elapsed().as_secs_f32());
     write_preview_wav(&out, Path::new(output))?;
@@ -314,7 +323,7 @@ fn space(input: &str, output: &str, style: &str, amount: f32) -> Result<()> {
     Ok(())
 }
 
-fn voiced_mask(audio: &AudioData) -> Vec<f32> {
+fn voiced_mask(audio: &AudioData) -> VoiceMask {
     let score = detect_voice(audio).score();
     voice_mask(&score, audio.channels[0].len(), audio.sample_rate)
 }
@@ -345,5 +354,69 @@ fn body_try(input: &str, output: &str, style: &str, amount: f32) -> Result<()> {
     show("before", &audio);
     show("after", &out);
     write_preview_wav(&out, Path::new(output))?;
+    Ok(())
+}
+
+/// Time each step of opening a recording, as the app does.
+///   rawnaq-cli loadtest <input>
+fn loadtest(input: &str) -> Result<()> {
+    let t = Instant::now();
+    let lap = |what: &str, t: &mut Instant| {
+        println!("{what:>22}: {:6.1}s", t.elapsed().as_secs_f32());
+        *t = Instant::now();
+    };
+    let mut t = t;
+    let audio = load(Path::new(input))?;
+    lap("decode", &mut t);
+    let d = diagnose(&audio);
+    lap("diagnose", &mut t);
+    let _ = peaks(&audio, 1600);
+    lap("peaks", &mut t);
+    let sources = mirror_sources(&audio);
+    lap("mirror_sources", &mut t);
+    let out = std::env::temp_dir().join("rawnaq-loadtest.wav");
+    write_preview_wav(&audio, &out)?;
+    lap("write preview", &mut t);
+    println!("{:.0} s, {} ch, sources {:?}, preview {:.0} MB", d.duration_sec, audio.channels.len(), sources, std::fs::metadata(&out)?.len() as f64 / 1e6);
+    let _ = std::fs::remove_file(out);
+    Ok(())
+}
+
+/// Time each repair step on the first `seconds` of a recording, per channel.
+///   rawnaq-cli repairtime <input> <seconds>
+fn repairtime(input: &str, seconds: f32) -> Result<()> {
+    let audio = load(Path::new(input))?;
+    let sr = audio.sample_rate;
+    let n = ((seconds * sr as f32) as usize).min(audio.channels[0].len());
+    println!("{} ch, {} Hz, {:.0} s of {:.0} s", audio.channels.len(), sr, n as f32 / sr as f32, audio.channels[0].len() as f32 / sr as f32);
+    println!("channel copies: {:?}", mirror_sources(&audio));
+    for (c, ch) in audio.channels.iter().enumerate() {
+        let x = &ch[..n];
+        let t = Instant::now();
+        let a = cathar::inpaint_auto(x, sr, 50.0);
+        println!("ch{c} fill dropouts: {:6.1}s", t.elapsed().as_secs_f32());
+        let t = Instant::now();
+        let b = cathar::declick(&a, 10.0, 64);
+        println!("ch{c} declick:       {:6.1}s", t.elapsed().as_secs_f32());
+        let t = Instant::now();
+        let _ = cathar::dehum_adaptive(&b, sr, 0.0, 8);
+        println!("ch{c} dehum:         {:6.1}s", t.elapsed().as_secs_f32());
+    }
+    Ok(())
+}
+
+/// Time the app's own repair on the first `seconds` of a recording.
+///   rawnaq-cli repairrun <input> <seconds>
+fn repairrun(input: &str, seconds: f32) -> Result<()> {
+    let audio = load(Path::new(input))?;
+    let n = ((seconds * audio.sample_rate as f32) as usize).min(audio.channels[0].len());
+    let part = AudioData {
+        sample_rate: audio.sample_rate,
+        channels: audio.channels.iter().map(|c| c[..n].to_vec()).collect(),
+    };
+    let t = Instant::now();
+    let out = repair(&part, &RepairSettings::default(), &no_progress, &never_cancel)?;
+    let changed = out.channels[0].iter().zip(&part.channels[0]).filter(|(a, b)| a != b).count();
+    println!("{:.0} s repaired in {:.1}s; {} samples changed", n as f32 / audio.sample_rate as f32, t.elapsed().as_secs_f32(), changed);
     Ok(())
 }

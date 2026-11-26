@@ -10,7 +10,8 @@
 //! strength never re-runs the model.
 
 use crate::resample::resample;
-use crate::Progress;
+use crate::voice::VoiceMask;
+use crate::{Cancel, Progress, CANCELLED};
 use anyhow::{anyhow, Result};
 use cathar::AudioData;
 use deep_filter_rt::tract::{DfParams, DfTract, RuntimeParams};
@@ -28,38 +29,51 @@ pub struct Denoised {
     pub lsnr: Vec<Vec<f32>>,
 }
 
-pub fn denoise_full(audio: &AudioData, progress: Progress) -> Result<Denoised> {
+pub fn denoise_full(audio: &AudioData, progress: Progress, cancel: Cancel) -> Result<Denoised> {
     let sr = audio.sample_rate;
     let n_ch = audio.channels.len();
+    let sources = crate::mirror_sources(audio);
     let done = AtomicUsize::new(0);
     let total_frames: usize = audio
         .channels
         .iter()
-        .map(|c| (c.len() as u64 * DF_SR as u64 / sr as u64) as usize / 480 + 4)
+        .enumerate()
+        .filter(|(c, _)| sources[*c] == *c)
+        .map(|(_, c)| (c.len() as u64 * DF_SR as u64 / sr as u64) as usize / 480 + 4)
         .sum();
 
-    // One independent model instance per channel, channels in parallel.
-    let results: Vec<Result<(Vec<f32>, Vec<f32>)>> = std::thread::scope(|scope| {
+    // One independent model instance per distinct channel, channels in parallel.
+    let results: Vec<Option<Result<(Vec<f32>, Vec<f32>)>>> = std::thread::scope(|scope| {
         let handles: Vec<_> = audio
             .channels
             .iter()
-            .map(|ch| {
-                let done = &done;
-                scope.spawn(move || denoise_channel(ch, sr, done, total_frames, progress))
+            .enumerate()
+            .map(|(c, ch)| {
+                (sources[c] == c).then(|| {
+                    let done = &done;
+                    scope.spawn(move || denoise_channel(ch, sr, done, total_frames, progress, cancel))
+                })
             })
             .collect();
         handles
             .into_iter()
-            .map(|h| h.join().unwrap_or_else(|_| Err(anyhow!("denoise thread panicked"))))
+            .map(|h| h.map(|h| h.join().unwrap_or_else(|_| Err(anyhow!("denoise thread panicked")))))
             .collect()
     });
 
+    let mut computed: Vec<Option<(Vec<f32>, Vec<f32>)>> = Vec::with_capacity(n_ch);
+    for r in results {
+        computed.push(match r {
+            Some(r) => Some(r?),
+            None => None,
+        });
+    }
     let mut channels = Vec::with_capacity(n_ch);
     let mut lsnr = Vec::with_capacity(n_ch);
-    for r in results {
-        let (wet, l) = r?;
-        channels.push(wet);
-        lsnr.push(l);
+    for c in 0..n_ch {
+        let (wet, l) = computed[sources[c]].as_ref().expect("every source channel was processed");
+        channels.push(wet.clone());
+        lsnr.push(l.clone());
     }
     progress("denoise", 1.0);
     Ok(Denoised { wet: AudioData { sample_rate: sr, channels }, lsnr })
@@ -71,6 +85,7 @@ fn denoise_channel(
     done: &AtomicUsize,
     total_frames: usize,
     progress: Progress,
+    cancel: Cancel,
 ) -> Result<(Vec<f32>, Vec<f32>)> {
     let x48 = resample(input, sr, DF_SR);
 
@@ -92,6 +107,9 @@ fn denoise_channel(
     let mut enh = Array2::<f32>::zeros((1, hop));
 
     for (f, frame) in padded.chunks_exact(hop).enumerate() {
+        if f % 200 == 0 && cancel() {
+            return Err(anyhow!(CANCELLED));
+        }
         noisy.row_mut(0).iter_mut().zip(frame).for_each(|(d, s)| *d = *s);
         let l = df.process(noisy.view(), enh.view_mut())?;
         lsnr.push(l);
@@ -113,13 +131,12 @@ fn denoise_channel(
 }
 
 /// Merge the mask into spans of voice, in seconds, for display.
-pub fn voice_regions(mask: &[f32], sample_rate: u32) -> Vec<[f32; 2]> {
-    let step = (sample_rate as usize / 100).max(1);
+pub fn voice_regions(mask: &VoiceMask, _sample_rate: u32) -> Vec<[f32; 2]> {
+    let frames = mask.frames();
     let mut out: Vec<[f32; 2]> = Vec::new();
     let mut start: Option<usize> = None;
-    for (k, chunk) in mask.chunks(step).enumerate() {
-        let on = chunk[0] > 0.5;
-        match (on, start) {
+    for (k, v) in frames.iter().enumerate() {
+        match (*v > 0.5, start) {
             (true, None) => start = Some(k),
             (false, Some(s)) => {
                 out.push([s as f32 * 0.01, k as f32 * 0.01]);
@@ -129,7 +146,7 @@ pub fn voice_regions(mask: &[f32], sample_rate: u32) -> Vec<[f32; 2]> {
         }
     }
     if let Some(s) = start {
-        out.push([s as f32 * 0.01, mask.len() as f32 / sample_rate as f32]);
+        out.push([s as f32 * 0.01, frames.len() as f32 * 0.01]);
     }
     out.truncate(2000);
     out
@@ -155,7 +172,7 @@ pub fn mix_protected(
     hiss: f32,
     strength: f32,
     protect: f32,
-    mask: &[f32],
+    mask: &VoiceMask,
 ) -> AudioData {
     let h = hiss.clamp(0.0, 1.0);
     let s = strength.clamp(0.0, 1.0);
@@ -169,10 +186,10 @@ pub fn mix_protected(
             d.iter()
                 .zip(c)
                 .zip(w)
-                .zip(mask)
-                .map(|(((d, c), w), v)| {
+                .enumerate()
+                .map(|(i, ((d, c), w))| {
                     let base = d + (c - d) * h;
-                    let m = s * (1.0 - p * v);
+                    let m = s * (1.0 - p * mask.at(i));
                     base * (1.0 - m) + w * m
                 })
                 .collect()
