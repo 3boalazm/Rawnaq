@@ -12,6 +12,9 @@ use std::time::Instant;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("cracktest") {
+        return cracktest(&args[2], args[3].parse()?, args[4].parse()?, args.get(5).map(String::as_str));
+    }
     if args.get(1).map(String::as_str) == Some("repairrun") {
         return repairrun(&args[2], args[3].parse()?, &args[4..]);
     }
@@ -424,5 +427,29 @@ fn repairrun(input: &str, seconds: f32, flags: &[String]) -> Result<()> {
     let out = repair(&part, &settings, &no_progress, &never_cancel)?;
     let changed = out.channels[0].iter().zip(&part.channels[0]).filter(|(a, b)| a != b).count();
     println!("{:.0} s repaired in {:.1}s; {} samples changed", n as f32 / audio.sample_rate as f32, t.elapsed().as_secs_f32(), changed);
+    Ok(())
+}
+
+/// What the de-crackler changes at a given sensitivity.
+///   rawnaq-cli cracktest <input> <seconds> <sensitivity 1..10> [removed.wav]
+fn cracktest(input: &str, seconds: f32, sensitivity: f32, removed: Option<&str>) -> Result<()> {
+    let audio = load(Path::new(input))?;
+    let sr = audio.sample_rate;
+    let n = ((seconds * sr as f32) as usize).min(audio.channels[0].len());
+    let x = &audio.channels[0][..n];
+    let y = cathar::decrackle(x, sr, sensitivity);
+    let changed = x.iter().zip(&y).filter(|(a, b)| a != b).count();
+    let energy = |v: &mut dyn Iterator<Item = f64>| v.sum::<f64>();
+    let diff = energy(&mut x.iter().zip(&y).map(|(a, b)| ((a - b) as f64).powi(2)));
+    let sig = energy(&mut x.iter().map(|a| (*a as f64).powi(2)));
+    if let Some(path) = removed {
+        let diff: Vec<f32> = x.iter().zip(&y).map(|(a, b)| a - b).collect();
+        write_preview_wav(&AudioData { sample_rate: sr, channels: vec![diff] }, Path::new(path))?;
+    }
+    println!(
+        "sensitivity {sensitivity:>4}: {changed:>8} samples changed ({:.2}%), removed {:.1} dB under the signal",
+        changed as f32 / n as f32 * 100.0,
+        10.0 * (diff / sig.max(1e-20)).max(1e-20).log10()
+    );
     Ok(())
 }

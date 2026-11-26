@@ -17,6 +17,10 @@ pub struct RepairSettings {
     /// Smooth the dense, fine crackle of a worn tape or record, or of a
     /// recording made through a damaged speaker. Finer than a click.
     pub decrackle: bool,
+    /// How hard it works, 0..1 (Cathar's sensitivity 1..10). At the middle of
+    /// the range it changes almost nothing; the crackle of a damaged recording
+    /// starts to go from about 0.8.
+    pub decrackle_amount: f32,
     /// Remove 50/60 Hz mains hum. Does nothing when no hum is detected.
     pub dehum: bool,
     /// Rebuild flat-topped (clipped) peaks. Slow on long files.
@@ -30,6 +34,7 @@ impl Default for RepairSettings {
             declick: true,
             declick_threshold: 10.0,
             decrackle: false,
+            decrackle_amount: 0.85,
             dehum: true,
             declip: false,
         }
@@ -190,7 +195,8 @@ pub fn repair(
             tick();
         }
         if s.decrackle {
-            x = in_pieces(&x, sr, cancel, &within, &|piece| decrackle(piece, sr, 5.0))?;
+            let sensitivity = 1.0 + 9.0 * s.decrackle_amount.clamp(0.0, 1.0);
+            x = in_pieces(&x, sr, cancel, &within, &|piece| decrackle(piece, sr, sensitivity))?;
             tick();
         }
         if s.dehum {

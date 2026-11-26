@@ -69,6 +69,24 @@ export function RepairPanel({ s }: { s: Session }) {
         disabled={off}
         onChange={(v) => s.patchRepair({ decrackle: v })}
       />
+      {r.decrackle && (
+        <div className="crack-amount">
+          <Knob
+            label="قوة إزالة الخروشة"
+            value={Math.round(r.decrackle_amount * 100)}
+            min={10}
+            max={100}
+            step={5}
+            reset={85}
+            display={`${Math.round(r.decrackle_amount * 100)}%`}
+            disabled={off}
+            onChange={(v) => s.patchRepair({ decrackle_amount: v / 100 })}
+          />
+          <p className="fine">
+            أقل من 70% تكاد لا تغيّر شيئًا. الخروشة الكثيفة تبدأ تختفي من 80%، وفوق 95% قد تُنعّم الصوت قليلًا.
+          </p>
+        </div>
+      )}
       <Switch
         label="إزالة الطنين الكهربائي"
         help="لا يغيّر شيئًا إن لم يوجد طنين"

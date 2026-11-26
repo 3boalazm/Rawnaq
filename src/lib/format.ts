@@ -5,7 +5,7 @@ export const AUDIO_EXTENSIONS = [
 ];
 
 export const DEFAULT_SETTINGS: Settings = {
-  repair: { fill_dropouts: true, declick: true, declick_threshold: 10, decrackle: false, dehum: true, declip: false },
+  repair: { fill_dropouts: true, declick: true, declick_threshold: 10, decrackle: false, decrackle_amount: 0.85, dehum: true, declip: false },
   denoise: true,
   engine: "deepfilter",
   hiss: 0.6,

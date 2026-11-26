@@ -111,6 +111,8 @@ export interface RepairSettings {
   declick: boolean;
   declick_threshold: number;
   decrackle: boolean;
+  /** How hard the de-crackle works, 0..1. */
+  decrackle_amount: number;
   dehum: boolean;
   declip: boolean;
 }

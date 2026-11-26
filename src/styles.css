@@ -1290,3 +1290,6 @@ button {
 .applying ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; max-height: 66px; overflow: hidden; }
 .applying li { display: flex; gap: 8px; align-items: baseline; color: var(--text); }
 .applying li small { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 26px; }
+
+.crack-amount { display: grid; justify-items: center; gap: 6px; padding-bottom: 6px; }
+.crack-amount .fine { text-align: center; }
