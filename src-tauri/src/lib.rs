@@ -318,11 +318,17 @@ async fn process(
 
     let progress_app = app.clone();
     let reuse = cached_mixed.clone();
+    let light_app = app.clone();
     let work = tauri::async_runtime::spawn_blocking(move || -> Result<Worked, String> {
         // Only the mastering changed: master the cached mix again.
         if let Some(m) = &reuse {
             trace("process: mastering only");
+            let step = |fraction: f32| {
+                let _ = light_app.emit("progress", ProgressEvent { stage: "master".into(), fraction });
+            };
+            step(0.05);
             let (output, report) = enhance(&m.audio, &settings.enhance, m.loss);
+            step(0.75);
             let peaks = peaks_of(&output, WAVE_BUCKETS, m.audio.channels[0].len());
             return Ok(Worked::Light { output: Arc::new(output), peaks, report });
         }
@@ -432,6 +438,7 @@ async fn process(
         // The output may run on past the recording (a reverb tail); the track
         // shows the recording's own length so it lines up with the others.
         trace("process: mastered");
+        progress("finish", 0.8);
         let pk = peaks_of(&output, WAVE_BUCKETS, mixed.channels[0].len());
         Ok(Worked::Full(Box::new(Full {
             repaired,
@@ -456,6 +463,7 @@ async fn process(
             trace("process: writing the restored preview");
             let m = cached_mixed.expect("a light run needs the cached mix");
             let preview = write_preview(&app, &state, "restored", &output)?;
+            let _ = app.emit("progress", ProgressEvent { stage: "master".into(), fraction: 1.0 });
             let mut s = state.session.lock().unwrap();
             let noise = s.analysis.as_ref().map(|a| a.noise.clone());
             s.output = Some(output);

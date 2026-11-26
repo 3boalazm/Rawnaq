@@ -193,8 +193,8 @@ export default function App() {
               </div>
             )}
             {!busy && s.syncing && (
-              <div className="progress sync" role="status" aria-label="تطبيق التغييرات">
-                <div />
+              <div className="progress" role="status" aria-label="تطبيق التغييرات">
+                <div style={{ width: `${Math.max(4, Math.round(s.syncInfo.fraction * 100))}%` }} />
               </div>
             )}
           </section>
@@ -255,11 +255,36 @@ export default function App() {
                   {runLabel}
                 </button>
               )}
+              {s.syncing && (
+                <div className="applying" role="status">
+                  <div className="applying-head">
+                    <span>
+                      {s.syncInfo.changes.length > 1
+                        ? `يُطبَّق ${s.syncInfo.changes.length} تغييرات`
+                        : "يُطبَّق التغيير"}
+                    </span>
+                    <b dir="ltr">{Math.round(s.syncInfo.fraction * 100)}%</b>
+                  </div>
+                  <i aria-hidden="true">
+                    <em style={{ width: `${Math.max(4, Math.round(s.syncInfo.fraction * 100))}%` }} />
+                  </i>
+                  <ol>
+                    {s.syncInfo.changes.map((c, i) => (
+                      <li key={c}>
+                        <small dir="ltr">
+                          {i + 1}/{s.syncInfo.changes.length}
+                        </small>
+                        {c}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
               <span className="fine">
                 {!s.applied
                   ? "الإعدادات مقترحة حسب التشخيص."
                   : s.syncing
-                    ? "يُطبَّق التغيير…"
+                    ? "تُطبَّق معًا في مرّة واحدة."
                     : s.dirty
                       ? "هذا التغيير يحتاج إعادة الترميم."
                       : "التنقية والماستر يُطبَّقان تلقائيًا."}

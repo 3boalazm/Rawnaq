@@ -5,7 +5,7 @@ export const AUDIO_EXTENSIONS = [
 ];
 
 export const DEFAULT_SETTINGS: Settings = {
-  repair: { fill_dropouts: true, declick: true, declick_threshold: 10, dehum: true, declip: false },
+  repair: { fill_dropouts: true, declick: true, declick_threshold: 10, decrackle: false, dehum: true, declip: false },
   denoise: true,
   engine: "deepfilter",
   hiss: 0.6,
@@ -150,4 +150,32 @@ export function remaining(overall: number | null, elapsedMs: number): string | n
   if (min < 60) return `حوالي ${min} ${min === 1 ? "دقيقة" : min <= 10 ? "دقائق" : "دقيقة"}`;
   const h = Math.floor(min / 60);
   return `حوالي ${h} ${h === 1 ? "ساعة" : h === 2 ? "ساعتين" : "ساعات"}${min % 60 ? ` و${min % 60} دقيقة` : ""}`;
+}
+
+/**
+ * What changed between the settings last applied and the ones being applied
+ * now, in the user's words, for the "applying" line.
+ */
+export function describeChanges(from: Settings, to: Settings): string[] {
+  const out: string[] = [];
+  const a = from.enhance;
+  const b = to.enhance;
+  const db = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`;
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  if (from.denoise !== to.denoise) out.push(to.denoise ? "تشغيل التنقية" : "إيقاف التنقية");
+  if (from.hiss !== to.hiss) out.push(`أرضية التشويش ${pct(to.hiss)}`);
+  if (from.strength !== to.strength) out.push(`شدة التنقية ${pct(to.strength)}`);
+  if (from.protect !== to.protect) out.push(`حماية الصوت ${pct(to.protect)}`);
+  if (a.master_db !== b.master_db) out.push(`${b.master_db > a.master_db ? "صوت أعلى" : "صوت أوطى"} ${db(b.master_db)}`);
+  if (a.loudness !== b.loudness || a.target_lufs !== b.target_lufs) out.push("مستوى الجهارة");
+  if (a.warmth_db !== b.warmth_db) out.push(`الدفء ${db(b.warmth_db)}`);
+  if (a.clarity_db !== b.clarity_db) out.push(`الوضوح ${db(b.clarity_db)}`);
+  if (a.tone_restore !== b.tone_restore) out.push("تعويض النغمة");
+  if (a.eq_db.some((v, i) => v !== b.eq_db[i])) out.push("المعادل");
+  if (a.body !== b.body) out.push(`علاج الصوت: ${BODIES.find((x) => x.id === b.body)!.label}`);
+  else if (a.body_amount !== b.body_amount && b.body !== "none") out.push(`مقدار العلاج ${pct(b.body_amount)}`);
+  if (a.reverb !== b.reverb) out.push(`الصدى: ${REVERBS.find((x) => x.id === b.reverb)!.label}`);
+  else if (a.reverb_amount !== b.reverb_amount && b.reverb !== "none") out.push(`مقدار الصدى ${pct(b.reverb_amount)}`);
+  if (a.stereo !== b.stereo) out.push("قناتان");
+  return out;
 }

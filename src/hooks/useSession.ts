@@ -3,7 +3,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { AUDIO_EXTENSIONS, DEFAULT_SETTINGS } from "../lib/format";
+import { AUDIO_EXTENSIONS, DEFAULT_SETTINGS, describeChanges } from "../lib/format";
 import type { Loaded, Mode, Processed, Settings } from "../types";
 
 export interface Busy {
@@ -33,6 +33,8 @@ export function useSession() {
   const [muted, setMuted] = useState(false);
   // A light re-run (mix, master) in flight; unlike `busy` it locks nothing.
   const [syncing, setSyncing] = useState(false);
+  // What the light re-run in flight is applying, and how far along it is.
+  const [syncInfo, setSyncInfo] = useState<{ changes: string[]; fraction: number }>({ changes: [], fraction: 0 });
   // Whether the backend holds a denoise result for the applied repair settings.
   const [denoiseCached, setDenoiseCached] = useState(false);
   // Whether the optional MossFormer2 model is installed.
@@ -78,9 +80,13 @@ export function useSession() {
   }, []);
 
   useEffect(() => {
-    const un = listen<{ stage: string; fraction: number }>("progress", (e) =>
-      setBusy((b) => (b ? { ...e.payload, startedAt: b.startedAt } : b)),
-    );
+    const un = listen<{ stage: string; fraction: number }>("progress", (e) => {
+      setBusy((b) => (b ? { ...e.payload, startedAt: b.startedAt } : b));
+      // A live apply is either mastering alone, or the mix and then mastering.
+      const { stage, fraction } = e.payload;
+      const f = stage === "master" ? fraction : stage === "finish" ? 0.05 + fraction * 0.85 : null;
+      if (f !== null) setSyncInfo((i) => ({ ...i, fraction: Math.max(i.fraction, f) }));
+    });
     return () => {
       un.then((f) => f());
     };
@@ -166,7 +172,9 @@ export function useSession() {
   useEffect(() => {
     if (!live || busy || syncing) return;
     const s = settings;
+    const from = applied!;
     const timer = setTimeout(async () => {
+      setSyncInfo({ changes: describeChanges(from, s), fraction: 0 });
       setSyncing(true);
       try {
         const result = await invoke<Processed>("process", { settings: s });
@@ -182,7 +190,7 @@ export function useSession() {
       }
     }, 280);
     return () => clearTimeout(timer);
-  }, [live, busy, syncing, settings]);
+  }, [live, busy, syncing, settings, applied]);
 
   const exportFile = async () => {
     if (!loaded) return;
@@ -263,7 +271,7 @@ export function useSession() {
   };
 
   return {
-    loaded, processed, settings, applied, dirty, busy, syncing, error, notice, deepAvailable,
+    loaded, processed, settings, applied, dirty, busy, syncing, syncInfo, error, notice, deepAvailable,
     mode, setMode, playing, time, volume, muted, setVolume, toggleMute,
     pickFile, run, cancel, exportFile, togglePlay, seek,
     patch, patchEnhance, patchRepair, audioProps,

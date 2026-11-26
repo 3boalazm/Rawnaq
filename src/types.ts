@@ -110,6 +110,7 @@ export interface RepairSettings {
   fill_dropouts: boolean;
   declick: boolean;
   declick_threshold: number;
+  decrackle: boolean;
   dehum: boolean;
   declip: boolean;
 }

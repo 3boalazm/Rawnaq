@@ -1280,3 +1280,13 @@ button {
 .restoring b { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent-2); }
 .restoring span { color: var(--text); }
 .restoring small { color: var(--muted); font-size: 12px; }
+
+/* What a live apply is doing: the changes by name, and how far along. */
+.applying { display: grid; gap: 6px; text-align: start; font-size: 12px; }
+.applying-head { display: flex; justify-content: space-between; align-items: baseline; }
+.applying-head b { color: var(--accent-2); font-variant-numeric: tabular-nums; }
+.applying i { height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.applying em { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 0.25s; }
+.applying ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; max-height: 66px; overflow: hidden; }
+.applying li { display: flex; gap: 8px; align-items: baseline; color: var(--text); }
+.applying li small { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 26px; }

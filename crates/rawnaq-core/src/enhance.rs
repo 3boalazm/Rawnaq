@@ -292,6 +292,38 @@ mod tests {
         assert!((chans[0][1000] - quiet_before).abs() < 1e-5);
     }
 
+    /// Share of the output that is not the tone that went in, dB below it.
+    fn distortion_db(y: &[f32], hz: f32, sr: f32) -> f32 {
+        let w = std::f32::consts::TAU * hz / sr;
+        let (mut a, mut b, mut total) = (0f64, 0f64, 0f64);
+        for (i, v) in y.iter().enumerate() {
+            let ph = w * i as f32;
+            a += (*v * ph.sin()) as f64;
+            b += (*v * ph.cos()) as f64;
+            total += (*v as f64).powi(2);
+        }
+        let n = y.len() as f64;
+        let tone = 2.0 * (a * a + b * b) / n;
+        (10.0 * ((total - tone).max(1e-12) / tone).log10()) as f32
+    }
+
+    #[test]
+    fn a_hard_driven_limiter_does_not_crackle() {
+        // A low note pushed 19 dB over the ceiling, as a big master gain does.
+        // A limiter that lets go between the peaks of the wave reshapes every
+        // cycle, which is heard as crackle, worst on small speakers.
+        let sr = 48_000u32;
+        let hz = 110.0;
+        let x: Vec<f32> = (0..sr * 3).map(|i| 8.0 * (std::f32::consts::TAU * hz * i as f32 / sr as f32).sin()).collect();
+        let mut chans = vec![x];
+        limit(&mut chans, sr, -1.0);
+        let y = &chans[0][sr as usize..sr as usize * 2]; // settled
+        let peak = y.iter().fold(0f32, |m, s| m.max(s.abs()));
+        assert!(peak <= 10f32.powf(-1.0 / 20.0) + 1e-4, "peak {peak}");
+        let d = distortion_db(y, hz, sr as f32);
+        assert!(d < -40.0, "distortion only {d} dB under the tone");
+    }
+
     #[test]
     fn loudness_reaches_the_target() {
         let sr = 48_000u32;

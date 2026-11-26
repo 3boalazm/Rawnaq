@@ -63,6 +63,13 @@ export function RepairPanel({ s }: { s: Session }) {
         onChange={(v) => s.patchRepair({ declick: v })}
       />
       <Switch
+        label="إزالة الخروشة"
+        help="خشخشة ناعمة متواصلة: شريط بالٍ أو تسجيل عبر سماعة تالفة"
+        checked={r.decrackle}
+        disabled={off}
+        onChange={(v) => s.patchRepair({ decrackle: v })}
+      />
+      <Switch
         label="إزالة الطنين الكهربائي"
         help="لا يغيّر شيئًا إن لم يوجد طنين"
         checked={r.dehum}

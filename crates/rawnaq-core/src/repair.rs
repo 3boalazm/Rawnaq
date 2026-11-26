@@ -2,7 +2,7 @@
 //! each step only rebuilds short damaged spans from their own neighbours.
 
 use crate::{Cancel, Progress, CANCELLED};
-use cathar::{declick, declip, dehum_adaptive, inpaint_auto, AudioData};
+use cathar::{declick, declip, decrackle, dehum_adaptive, inpaint_auto, AudioData};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -14,6 +14,9 @@ pub struct RepairSettings {
     pub declick: bool,
     /// Click threshold in multiples of the local RMS; lower removes more.
     pub declick_threshold: f32,
+    /// Smooth the dense, fine crackle of a worn tape or record, or of a
+    /// recording made through a damaged speaker. Finer than a click.
+    pub decrackle: bool,
     /// Remove 50/60 Hz mains hum. Does nothing when no hum is detected.
     pub dehum: bool,
     /// Rebuild flat-topped (clipped) peaks. Slow on long files.
@@ -22,13 +25,20 @@ pub struct RepairSettings {
 
 impl Default for RepairSettings {
     fn default() -> Self {
-        Self { fill_dropouts: true, declick: true, declick_threshold: 10.0, dehum: true, declip: false }
+        Self {
+            fill_dropouts: true,
+            declick: true,
+            declick_threshold: 10.0,
+            decrackle: false,
+            dehum: true,
+            declip: false,
+        }
     }
 }
 
 impl RepairSettings {
     pub fn any(&self) -> bool {
-        self.fill_dropouts || self.declick || self.dehum || self.declip
+        self.fill_dropouts || self.declick || self.decrackle || self.dehum || self.declip
     }
 }
 
@@ -94,7 +104,7 @@ pub fn repair(
     cancel: Cancel,
 ) -> anyhow::Result<AudioData> {
     let sr = audio.sample_rate;
-    let steps = [s.fill_dropouts, s.declip, s.declick, s.dehum].iter().filter(|x| **x).count();
+    let steps = [s.fill_dropouts, s.declip, s.declick, s.decrackle, s.dehum].iter().filter(|x| **x).count();
     let sources = crate::mirror_sources(audio);
     let unique = sources.iter().enumerate().filter(|(c, s)| *c == **s).count();
     let total = (steps * unique).max(1) as f32;
@@ -127,6 +137,10 @@ pub fn repair(
         if s.declick {
             let threshold = s.declick_threshold.clamp(4.0, 30.0);
             x = in_pieces(&x, sr, cancel, &|piece| declick(piece, threshold, 64))?;
+            tick();
+        }
+        if s.decrackle {
+            x = in_pieces(&x, sr, cancel, &|piece| decrackle(piece, sr, 5.0))?;
             tick();
         }
         if s.dehum {

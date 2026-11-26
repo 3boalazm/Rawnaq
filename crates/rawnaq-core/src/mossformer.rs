@@ -47,11 +47,39 @@ const BINS: usize = WIN / 2 + 1;
 const MELS: usize = 60;
 /// The filter bank pads each frame to the next power of two.
 const FBANK_FFT: usize = 2048;
-/// The model is fed four seconds at a time, three seconds apart; half a
-/// second at each edge of a segment is thrown away.
+/// The model is fed four seconds at a time, three seconds apart, so each
+/// segment shares its first and last second with a neighbour. A quarter of a
+/// second at each edge is thrown away (the model has no context there) and the
+/// half second in between is a crossfade from one segment to the next.
+///
+/// The reference implementation cuts straight from one segment to the next.
+/// The two never agree exactly, so that leaves a small step in the waveform
+/// every three seconds: a tick, and with many of them, a crackle.
 const SEGMENT: usize = SR as usize * 4;
 const STRIDE: usize = SR as usize * 3;
-const GIVE_UP: usize = (SEGMENT - STRIDE) / 2;
+const GIVE_UP: usize = SR as usize / 4;
+
+/// How much of segment `k` is used at its sample `i`: the two segments that
+/// cover a sample always add up to one.
+fn weight(k: usize, i: usize) -> f32 {
+    let overlap = SEGMENT - STRIDE;
+    let ramp = (overlap - 2 * GIVE_UP) as f32;
+    let rising = if k == 0 || i >= overlap - GIVE_UP {
+        1.0
+    } else if i < GIVE_UP {
+        0.0
+    } else {
+        (i - GIVE_UP) as f32 / ramp
+    };
+    let falling = if i < STRIDE + GIVE_UP {
+        1.0
+    } else if i >= SEGMENT - GIVE_UP {
+        0.0
+    } else {
+        1.0 - (i - STRIDE - GIVE_UP) as f32 / ramp
+    };
+    rising * falling
+}
 /// The model was trained on samples at 16-bit integer scale.
 const INT16: f32 = 32768.0;
 
@@ -211,12 +239,10 @@ impl MossFormer {
                         let start = k * STRIDE;
                         match dsp.segment(session, &audio[start..start + SEGMENT], &mut rng) {
                             Ok(seg) => {
-                                // Segments keep their middle three seconds, which
-                                // tile the signal without overlap.
-                                let from = if k == 0 { 0 } else { GIVE_UP };
                                 let mut out = out.lock().unwrap();
-                                out[start + from..start + SEGMENT - GIVE_UP]
-                                    .copy_from_slice(&seg[from..SEGMENT - GIVE_UP]);
+                                for (i, v) in seg.iter().enumerate() {
+                                    out[start + i] += v * weight(k, i);
+                                }
                             }
                             Err(e) => {
                                 *failure.lock().unwrap() = Some(e);
@@ -356,4 +382,31 @@ fn deltas(x: &[f32], frames: usize) -> Vec<f32> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlapping_segments_always_add_up_to_one() {
+        // Every sample of a long signal, summed over the segments covering it.
+        let total = SEGMENT + 5 * STRIDE;
+        let mut sum = vec![0f32; total];
+        for k in 0..=5 {
+            for i in 0..SEGMENT {
+                sum[k * STRIDE + i] += weight(k, i);
+            }
+        }
+        // The very end belongs to a segment's discarded edge; it is padding.
+        for (i, s) in sum[..total - SEGMENT + STRIDE].iter().enumerate() {
+            assert!((s - 1.0).abs() < 1e-5, "sample {i} has weight {s}");
+        }
+    }
+
+    #[test]
+    fn the_change_from_one_segment_to_the_next_is_gradual() {
+        let steps = (1..SEGMENT).map(|i| (weight(1, i) - weight(1, i - 1)).abs()).fold(0f32, f32::max);
+        assert!(steps < 1e-3, "weight jumps by {steps}");
+    }
 }
