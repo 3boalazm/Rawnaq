@@ -8,6 +8,10 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    watch: { ignored: ["**/src-tauri/**", "**/target/**", "**/crates/**"] },
+    // Audio samples, models and packages are large and written to while the
+    // interface runs: watching them crashed the server (EBUSY on a .wav).
+    watch: {
+      ignored: ["**/src-tauri/**", "**/target/**", "**/crates/**", "**/samples/**", "**/models/**", "**/package/**"],
+    },
   },
 });

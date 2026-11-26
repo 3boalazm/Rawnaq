@@ -1222,3 +1222,45 @@ button {
 }
 .sheet dd { margin: 0; font-size: 13px; color: var(--muted); }
 .sheet .btn { justify-self: end; }
+
+/* Voice body: where the voice leans, and the three presets. */
+.spaces.three { grid-template-columns: 1fr 1fr 1fr; }
+.spaces button.hint:not(.on) { border-color: rgba(255, 178, 77, 0.35); }
+.lean {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: "label verdict num" "bar bar bar";
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 12px;
+}
+.lean span { grid-area: label; opacity: 0.65; }
+.lean b { grid-area: verdict; font-weight: 600; }
+.lean.thin b { color: var(--accent-2); }
+.lean.boomy b { color: var(--track-removed); }
+.lean.balanced b { color: var(--ok); }
+.lean small { grid-area: num; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.lean i {
+  grid-area: bar;
+  position: relative;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent-2), var(--ok) 45%, var(--ok) 70%, var(--track-removed));
+  opacity: 0.8;
+}
+.lean i em {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--text);
+  transform: translateX(-50%);
+}
+.body-amount { display: grid; justify-items: center; gap: 6px; padding-bottom: 6px; }
+.body-amount .fine { text-align: center; }

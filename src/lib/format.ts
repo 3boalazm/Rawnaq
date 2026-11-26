@@ -1,4 +1,4 @@
-import type { Engine, ReverbStyle, Settings, Verdict } from "../types";
+import type { BodyStyle, Engine, ReverbStyle, Settings, Verdict } from "../types";
 
 export const AUDIO_EXTENSIONS = [
   "wav", "mp3", "flac", "ogg", "m4a", "aac", "aiff", "aif", "opus", "mp4", "mkv",
@@ -20,6 +20,8 @@ export const DEFAULT_SETTINGS: Settings = {
     eq_db: [0, 0, 0, 0, 0],
     master_db: 0,
     stereo: false,
+    body: "none",
+    body_amount: 0.4,
     reverb: "none",
     reverb_amount: 0.4,
   },
@@ -60,6 +62,18 @@ export const ENGINES: { id: Engine; label: string; help: string }[] = [
   { id: "deepfilter", label: "سريع", help: "ينظّف الفواصل ويترك ما تحت الصوت" },
   { id: "mossformer", label: "عميق", help: "ينظّف تحت الصوت أيضًا، أبطأ" },
 ];
+
+export const BODIES: { id: BodyStyle; label: string; help: string }[] = [
+  { id: "none", label: "بدون", help: "الصوت كما هو" },
+  { id: "thicken", label: "تضخيم", help: "للصوت الرفيع: وزن وجهير ودفء" },
+  { id: "tame", label: "ترويض", help: "للصوت الضخم: يهدّئ الدمدمة والضربات" },
+];
+
+export const TONE_VERDICT: Record<string, string> = {
+  thin: "يميل إلى الرفيع",
+  balanced: "متوازن",
+  boomy: "يميل إلى الضخم",
+};
 
 export const REVERBS: { id: ReverbStyle; label: string; help: string }[] = [
   { id: "none", label: "بدون", help: "الصوت كما هو" },

@@ -5,6 +5,7 @@
 //! gain, the same tools a mastering engineer would use, applied to what is
 //! already in the recording.
 
+use crate::body::{body, BodyStyle};
 use crate::reverb::{reverb, ReverbStyle};
 use cathar::{bass, equalizer, highpass, integrated_loudness, lowpass, treble, AudioData};
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,10 @@ pub struct EnhanceSettings {
     pub master_db: f32,
     /// Write a mono recording to both left and right channels.
     pub stereo: bool,
+    /// Preset for a thin or a booming voice; `None` adds nothing.
+    pub body: BodyStyle,
+    /// 0..1, how far that preset goes.
+    pub body_amount: f32,
     /// The space added around the voice; `None` adds nothing.
     pub reverb: ReverbStyle,
     /// 0..1, how loud that space is next to the voice.
@@ -59,6 +64,8 @@ impl Default for EnhanceSettings {
             eq_db: [0.0; 5],
             master_db: 0.0,
             stereo: false,
+            body: BodyStyle::None,
+            body_amount: 0.4,
             reverb: ReverbStyle::None,
             reverb_amount: 0.4,
         }
@@ -153,6 +160,12 @@ pub fn enhance(audio: &AudioData, s: &EnhanceSettings, loss: (f32, f32)) -> (Aud
             x
         })
         .collect();
+
+    // After the tone shaping so the preset works on the final balance, before
+    // the reverberation so the space is not thickened or squashed with it.
+    if s.body != BodyStyle::None {
+        channels = body(&AudioData { sample_rate: sr, channels }, s.body, s.body_amount).channels;
+    }
 
     // Before the reverberation, so a mono recording gets a different space on
     // each side instead of the same one twice.

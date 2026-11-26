@@ -12,6 +12,12 @@ use std::time::Instant;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("tone") {
+        return tone(&args[2]);
+    }
+    if args.get(1).map(String::as_str) == Some("body") {
+        return body_try(&args[2], &args[3], &args[4], args[5].parse()?);
+    }
     if args.get(1).map(String::as_str) == Some("space") {
         return space(&args[2], &args[3], &args[4], args[5].parse()?);
     }
@@ -304,6 +310,40 @@ fn space(input: &str, output: &str, style: &str, amount: f32) -> Result<()> {
     let t = Instant::now();
     let (out, report) = enhance(&audio, &s, (0.0, 0.0));
     println!("{style}: {:.2}s, gain {:+.1} dB, limited {:.1} dB", t.elapsed().as_secs_f32(), report.gain_db, report.limited_db);
+    write_preview_wav(&out, Path::new(output))?;
+    Ok(())
+}
+
+fn voiced_mask(audio: &AudioData) -> Vec<f32> {
+    let score = detect_voice(audio).score();
+    voice_mask(&score, audio.channels[0].len(), audio.sample_rate)
+}
+
+/// How a recording's voice leans: thin, balanced or boomy.
+///   rawnaq-cli tone <input>
+fn tone(input: &str) -> Result<()> {
+    let audio = load(Path::new(input))?;
+    match measure(&audio, &voiced_mask(&audio)) {
+        Some(t) => println!("{}: low/mid {:+.1} dB, high/mid {:+.1} dB -> {}", Path::new(input).file_name().and_then(|n| n.to_str()).unwrap_or(input), t.low_mid_db, t.high_db, t.verdict),
+        None => println!("not enough voice to judge"),
+    }
+    Ok(())
+}
+
+/// Apply one body preset, to audition it.
+///   rawnaq-cli body <input> <output> <thicken|tame> <amount 0..1>
+fn body_try(input: &str, output: &str, style: &str, amount: f32) -> Result<()> {
+    let audio = load(Path::new(input))?;
+    let style: BodyStyle = serde_json::from_str(&format!("\"{style}\""))?;
+    let mask = voiced_mask(&audio);
+    let out = body(&audio, style, amount);
+    let show = |name: &str, a: &AudioData| {
+        if let Some(t) = measure(a, &mask) {
+            println!("{name:>7}: low/mid {:+.1} dB, high/mid {:+.1} dB -> {}", t.low_mid_db, t.high_db, t.verdict);
+        }
+    };
+    show("before", &audio);
+    show("after", &out);
     write_preview_wav(&out, Path::new(output))?;
     Ok(())
 }

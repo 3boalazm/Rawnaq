@@ -51,6 +51,7 @@ const processed: Processed = {
   removed_preview: "removed.wav",
   removed_peak_dbfs: -18,
   removed_peaks: fakePeaks(0.14),
+  tone: { low_mid_db: -12.5, high_db: -12, verdict: "thin" },
   voice_share: 0.62,
   noise: { level_dbfs: -48, voiced_dbfs: -44, low_dbfs: -55, mid_dbfs: -52, high_dbfs: -50, kind: "high" },
   voice_regions: [

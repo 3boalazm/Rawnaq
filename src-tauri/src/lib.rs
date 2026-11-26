@@ -3,11 +3,11 @@
 
 use rawnaq_core::mossformer::{find_models, MossFormer};
 use rawnaq_core::{
-    denoise_full, detect_voice, diagnose, enhance, learn_noise, load, mix_protected, peaks, peaks_of,
+    denoise_full, detect_voice, diagnose, enhance, learn_noise, load, measure, mix_protected, peaks, peaks_of,
     quality_gate, repair, residual, save, subtract_noise, tone_loss, voice_cut, voice_mask,
     voice_regions,
     write_preview_wav, AudioData, Denoised, Diagnosis, EnhanceReport, EnhanceSettings, NoiseProfile,
-    Peaks, QualityReport, RepairSettings,
+    Peaks, QualityReport, RepairSettings, ToneBalance,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -104,6 +104,8 @@ struct Processed {
     voice_share: f32,
     /// The steady noise measured in the recording.
     noise: Option<NoiseProfile>,
+    /// Whether the voice leans thin or boomy, measured before the mastering.
+    tone: Option<ToneBalance>,
     enhance: EnhanceReport,
 }
 
@@ -287,7 +289,7 @@ async fn process(
         progress("finish", 0.0);
         // The gate and the "removed" signal describe the denoisers alone, so
         // they are taken before tone and loudness change the level.
-        let (mixed, quality, loss, regions, share) = match (&denoised, &analysis) {
+        let (mixed, quality, loss, regions, share, tone) = match (&denoised, &analysis) {
             (Some(d), Some(a)) => {
                 // What "protect" guards. DeepFilterNet is kept off every
                 // voice. MossFormer2 is trusted under the voice, except where
@@ -315,9 +317,10 @@ async fn process(
                 let regions = voice_regions(&a.mask, repaired.sample_rate);
                 let voiced = a.score.iter().filter(|v| **v > 0.5).count();
                 let share = voiced as f32 / a.score.len().max(1) as f32;
-                (Arc::new(mixed), Some(q), loss, regions, share)
+                let tone = measure(&mixed, &a.mask);
+                (Arc::new(mixed), Some(q), loss, regions, share, tone)
             }
-            _ => (repaired.clone(), None, (0.0, 0.0), Vec::new(), 0.0),
+            _ => (repaired.clone(), None, (0.0, 0.0), Vec::new(), 0.0, None),
         };
         progress("finish", 0.4);
         let removed = residual(&original, &mixed);
@@ -326,9 +329,9 @@ async fn process(
         // The output may run on past the recording (a reverb tail); the track
         // shows the recording's own length so it lines up with the others.
         let pk = peaks_of(&output, WAVE_BUCKETS, mixed.channels[0].len());
-        Ok((repaired, analysis, denoised, output, quality, removed, pk, regions, share, report))
+        Ok((repaired, analysis, denoised, output, quality, removed, pk, regions, share, tone, report))
     });
-    let (repaired, analysis, denoised, output, quality, removed, pk, regions, share, report) =
+    let (repaired, analysis, denoised, output, quality, removed, pk, regions, share, tone, report) =
         work.await.map_err(err)??;
 
     let preview = write_preview(&app, &state, "restored", &output)?;
@@ -362,6 +365,7 @@ async fn process(
         voice_regions: regions,
         voice_share: share,
         noise,
+        tone,
         enhance: report,
     })
 }

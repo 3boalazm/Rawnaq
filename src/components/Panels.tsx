@@ -1,5 +1,5 @@
 import type { Session } from "../hooks/useSession";
-import { ISSUE_LABEL, LOUDNESS_LEVELS, EQ_BANDS, EQ_PRESETS, NOISE_KIND, REVERBS, signed } from "../lib/format";
+import { BODIES, ISSUE_LABEL, LOUDNESS_LEVELS, EQ_BANDS, EQ_PRESETS, NOISE_KIND, REVERBS, TONE_VERDICT, signed } from "../lib/format";
 import Knob from "./Knob";
 import Switch from "./Switch";
 import ToneCurve from "./ToneCurve";
@@ -346,8 +346,63 @@ export function EqPanel({ s }: { s: Session }) {
   const same = (a: number[], b: number[]) => a.every((v, i) => v === b[i]);
   const setBand = (i: number, v: number) =>
     s.patchEnhance({ eq_db: e.eq_db.map((old, k) => (k === i ? v : old)) });
+  const tone = s.processed?.tone;
+  const none = e.body === "none";
+  // The same curve as the backend: steep at the start, so the first notches count.
+  const effect = Math.round(Math.sqrt(e.body_amount) * 100);
+  const suggest = tone?.verdict === "thin" ? "thicken" : tone?.verdict === "boomy" ? "tame" : null;
   return (
     <>
+      <h3>علاج الصوت</h3>
+      {tone && (
+        <div className={`lean ${tone.verdict}`}>
+          <span>ميل الصوت</span>
+          <b>{TONE_VERDICT[tone.verdict]}</b>
+          <i aria-hidden="true">
+            <em style={{ insetInlineStart: `${Math.max(2, Math.min(98, ((tone.low_mid_db + 16) / 24) * 100))}%` }} />
+          </i>
+          <small dir="ltr">
+            {tone.low_mid_db > 0 ? "+" : ""}
+            {tone.low_mid_db.toFixed(1)} dB
+          </small>
+        </div>
+      )}
+      <div className="spaces three" role="radiogroup" aria-label="علاج الصوت">
+        {BODIES.map((b) => (
+          <button
+            key={b.id}
+            role="radio"
+            aria-checked={e.body === b.id}
+            className={`${e.body === b.id ? "on" : ""}${suggest === b.id ? " hint" : ""}`}
+            disabled={off}
+            onClick={() => s.patchEnhance({ body: b.id })}
+          >
+            <b>{b.label}</b>
+            <small>{b.help}</small>
+          </button>
+        ))}
+      </div>
+      <div className="body-amount">
+        <Knob
+          label="مقدار العلاج"
+          value={Math.round(e.body_amount * 100)}
+          min={0}
+          max={100}
+          step={1}
+          reset={40}
+          display={`${Math.round(e.body_amount * 100)}%`}
+          disabled={off || none}
+          onChange={(v) => s.patchEnhance({ body_amount: v / 100 })}
+        />
+        <p className="fine">
+          {none
+            ? tone && suggest
+              ? `التقدير أن الصوت ${TONE_VERDICT[tone.verdict]}: جرّب «${BODIES.find((b) => b.id === suggest)!.label}».`
+              : "اختر «تضخيم» لصوت رفيع أو «ترويض» لصوت ضخم."
+            : `كل خطوة صغيرة تُسمع: عند هذا المقدار الأثر ${effect}% من أقصاه.`}
+        </p>
+      </div>
+      <h3>المعادل</h3>
       <div className="chips wrap" role="radiogroup" aria-label="أنماط المعادل">
         {EQ_PRESETS.map((p) => (
           <button

@@ -8,6 +8,7 @@
 //! Every stage returns a new buffer and never touches its input, so the caller
 //! can cache each stage and re-run only what changed.
 
+pub mod body;
 pub mod denoise;
 pub mod diagnose;
 pub mod enhance;
@@ -20,6 +21,7 @@ pub mod resample;
 pub mod reverb;
 pub mod voice;
 
+pub use body::{body, measure, BodyStyle, ToneBalance};
 pub use cathar::AudioData;
 pub use denoise::{denoise_full, mix_protected, voice_regions, Denoised};
 pub use diagnose::{diagnose, Diagnosis};

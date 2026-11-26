@@ -50,6 +50,7 @@ export interface Processed {
   /** Share of the recording where a human voice was detected, 0..1. */
   voice_share: number;
   noise: NoiseProfile | null;
+  tone: ToneBalance | null;
   enhance: EnhanceReport;
 }
 
@@ -83,9 +84,24 @@ export interface EnhanceSettings {
   eq_db: number[];
   master_db: number;
   stereo: boolean;
+  body: BodyStyle;
+  /** How far the body preset goes, 0..1. */
+  body_amount: number;
   reverb: ReverbStyle;
   /** How loud the reverberation is next to the voice, 0..1. */
   reverb_amount: number;
+}
+
+/** Preset for a thin voice (thicken) or a booming one (tame). */
+export type BodyStyle = "none" | "thicken" | "tame";
+
+/** How the voice leans, measured in the voiced parts. */
+export interface ToneBalance {
+  /** 80-300 Hz against 300 Hz-3 kHz, dB. Higher is heavier. */
+  low_mid_db: number;
+  /** Above 3 kHz against 300 Hz-3 kHz, dB. Higher is brighter. */
+  high_db: number;
+  verdict: "thin" | "balanced" | "boomy";
 }
 
 export type ReverbStyle = "none" | "room" | "mosque" | "grand" | "hall" | "vast";
