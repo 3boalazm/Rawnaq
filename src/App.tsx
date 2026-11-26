@@ -228,6 +228,37 @@ export default function App() {
               {tool === "space" && <SpacePanel s={s} />}
             </div>
             <footer>
+              {/* Chosen before the first run: a repair option applies to the whole
+                  restoration, so changing it later redoes it from the start. */}
+              <div className={`pre-option${s.settings.repair.decrackle ? " on" : ""}`}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={s.settings.repair.decrackle}
+                    disabled={!!busy}
+                    onChange={(e) => s.patchRepair({ decrackle: e.target.checked })}
+                  />
+                  <span>
+                    <b>إزالة الخروشة</b>
+                    <small>تُفعَّل قبل الترميم وتشمل التسجيل كله</small>
+                  </span>
+                </label>
+                {s.settings.repair.decrackle && (
+                  <div className="pre-strength">
+                    <input
+                      type="range"
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={Math.round(s.settings.repair.decrackle_amount * 100)}
+                      disabled={!!busy}
+                      aria-label="قوة إزالة الخروشة"
+                      onChange={(e) => s.patchRepair({ decrackle_amount: Number(e.target.value) / 100 })}
+                    />
+                    <b dir="ltr">{Math.round(s.settings.repair.decrackle_amount * 100)}%</b>
+                  </div>
+                )}
+              </div>
               <div className="engines" role="radiogroup" aria-label="طريقة الترميم">
                 {ENGINES.map((e) => {
                   const missing = e.id === "mossformer" && !s.deepAvailable;

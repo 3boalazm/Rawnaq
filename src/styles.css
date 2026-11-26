@@ -1293,3 +1293,24 @@ button {
 
 .crack-amount { display: grid; justify-items: center; gap: 6px; padding-bottom: 6px; }
 .crack-amount .fine { text-align: center; }
+
+/* A repair option ticked before the first run, next to the restore button. */
+.pre-option {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  text-align: start;
+  display: grid;
+  gap: 8px;
+}
+.pre-option.on { border-color: rgba(255, 178, 77, 0.6); background: rgba(255, 122, 26, 0.08); }
+.pre-option label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.pre-option input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--accent, #ff7a1a); cursor: pointer; flex: none; }
+.pre-option span { display: grid; gap: 1px; }
+.pre-option b { font-size: 13px; }
+.pre-option small { font-size: 10.5px; color: var(--muted); }
+.pre-strength { display: flex; align-items: center; gap: 10px; }
+.pre-strength input[type="range"] { flex: 1; accent-color: var(--accent, #ff7a1a); }
+.pre-strength b { font-variant-numeric: tabular-nums; color: var(--accent-2); min-width: 36px; text-align: end; }
