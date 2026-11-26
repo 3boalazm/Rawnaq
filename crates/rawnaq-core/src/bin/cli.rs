@@ -13,7 +13,7 @@ use std::time::Instant;
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("repairrun") {
-        return repairrun(&args[2], args[3].parse()?);
+        return repairrun(&args[2], args[3].parse()?, &args[4..]);
     }
     if args.get(1).map(String::as_str) == Some("repairtime") {
         return repairtime(&args[2], args[3].parse()?);
@@ -406,8 +406,8 @@ fn repairtime(input: &str, seconds: f32) -> Result<()> {
 }
 
 /// Time the app's own repair on the first `seconds` of a recording.
-///   rawnaq-cli repairrun <input> <seconds>
-fn repairrun(input: &str, seconds: f32) -> Result<()> {
+///   rawnaq-cli repairrun <input> <seconds> [declip] [decrackle]
+fn repairrun(input: &str, seconds: f32, flags: &[String]) -> Result<()> {
     let audio = load(Path::new(input))?;
     let n = ((seconds * audio.sample_rate as f32) as usize).min(audio.channels[0].len());
     let part = AudioData {
@@ -415,7 +415,13 @@ fn repairrun(input: &str, seconds: f32) -> Result<()> {
         channels: audio.channels.iter().map(|c| c[..n].to_vec()).collect(),
     };
     let t = Instant::now();
-    let out = repair(&part, &RepairSettings::default(), &no_progress, &never_cancel)?;
+    let settings = RepairSettings {
+        declip: flags.iter().any(|f| f == "declip"),
+        decrackle: flags.iter().any(|f| f == "decrackle"),
+        ..RepairSettings::default()
+    };
+    println!("settings: {settings:?}");
+    let out = repair(&part, &settings, &no_progress, &never_cancel)?;
     let changed = out.channels[0].iter().zip(&part.channels[0]).filter(|(a, b)| a != b).count();
     println!("{:.0} s repaired in {:.1}s; {} samples changed", n as f32 / audio.sample_rate as f32, t.elapsed().as_secs_f32(), changed);
     Ok(())
