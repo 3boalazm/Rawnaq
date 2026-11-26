@@ -13,7 +13,7 @@ use std::time::Instant;
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("cracktest") {
-        return cracktest(&args[2], args[3].parse()?, args[4].parse()?, args.get(5).map(String::as_str));
+        return cracktest(&args[2], args[3].parse()?, args[4].parse()?, args.get(5).map(String::as_str), args.get(6).map(|p| p.parse()).transpose()?.unwrap_or(1));
     }
     if args.get(1).map(String::as_str) == Some("repairrun") {
         return repairrun(&args[2], args[3].parse()?, &args[4..]);
@@ -431,25 +431,28 @@ fn repairrun(input: &str, seconds: f32, flags: &[String]) -> Result<()> {
 }
 
 /// What the de-crackler changes at a given sensitivity.
-///   rawnaq-cli cracktest <input> <seconds> <sensitivity 1..10> [removed.wav]
-fn cracktest(input: &str, seconds: f32, sensitivity: f32, removed: Option<&str>) -> Result<()> {
+///   rawnaq-cli cracktest <input> <seconds> <sensitivity 1..10> [removed.wav] [passes]
+fn cracktest(input: &str, seconds: f32, sensitivity: f32, removed: Option<&str>, passes: usize) -> Result<()> {
     let audio = load(Path::new(input))?;
     let sr = audio.sample_rate;
     let n = ((seconds * sr as f32) as usize).min(audio.channels[0].len());
     let x = &audio.channels[0][..n];
-    let y = cathar::decrackle(x, sr, sensitivity);
-    let changed = x.iter().zip(&y).filter(|(a, b)| a != b).count();
-    let energy = |v: &mut dyn Iterator<Item = f64>| v.sum::<f64>();
-    let diff = energy(&mut x.iter().zip(&y).map(|(a, b)| ((a - b) as f64).powi(2)));
-    let sig = energy(&mut x.iter().map(|a| (*a as f64).powi(2)));
+    let sig: f64 = x.iter().map(|a| (*a as f64).powi(2)).sum();
+    println!("sensitivity {sensitivity}, {passes} pass(es):");
+    let mut y = x.to_vec();
+    for pass in 1..=passes {
+        y = cathar::decrackle(&y, sr, sensitivity);
+        let changed = x.iter().zip(&y).filter(|(a, b)| a != b).count();
+        let diff: f64 = x.iter().zip(&y).map(|(a, b)| ((a - b) as f64).powi(2)).sum();
+        println!(
+            "  after pass {pass}: {changed:>8} samples differ from the original ({:.2}%), removed {:.1} dB under the signal",
+            changed as f32 / n as f32 * 100.0,
+            10.0 * (diff / sig.max(1e-20)).max(1e-20).log10()
+        );
+    }
     if let Some(path) = removed {
         let diff: Vec<f32> = x.iter().zip(&y).map(|(a, b)| a - b).collect();
         write_preview_wav(&AudioData { sample_rate: sr, channels: vec![diff] }, Path::new(path))?;
     }
-    println!(
-        "sensitivity {sensitivity:>4}: {changed:>8} samples changed ({:.2}%), removed {:.1} dB under the signal",
-        changed as f32 / n as f32 * 100.0,
-        10.0 * (diff / sig.max(1e-20)).max(1e-20).log10()
-    );
     Ok(())
 }

@@ -1313,4 +1313,4 @@ button {
 .pre-option small { font-size: 10.5px; color: var(--muted); }
 .pre-strength { display: flex; align-items: center; gap: 10px; }
 .pre-strength input[type="range"] { flex: 1; accent-color: var(--accent, #ff7a1a); }
-.pre-strength b { font-variant-numeric: tabular-nums; color: var(--accent-2); min-width: 36px; text-align: end; }
+.pre-strength b { font-variant-numeric: tabular-nums; color: var(--accent-2); min-width: 52px; text-align: end; white-space: nowrap; }

@@ -1,5 +1,5 @@
 import type { Session } from "../hooks/useSession";
-import { BODIES, ISSUE_LABEL, LOUDNESS_LEVELS, EQ_BANDS, EQ_PRESETS, NOISE_KIND, REVERBS, TONE_VERDICT, signed } from "../lib/format";
+import { BODIES, crackPasses, ISSUE_LABEL, LOUDNESS_LEVELS, EQ_BANDS, EQ_PRESETS, NOISE_KIND, REVERBS, TONE_VERDICT, signed } from "../lib/format";
 import Knob from "./Knob";
 import Switch from "./Switch";
 import ToneCurve from "./ToneCurve";
@@ -75,15 +75,15 @@ export function RepairPanel({ s }: { s: Session }) {
             label="قوة إزالة الخروشة"
             value={Math.round(r.decrackle_amount * 100)}
             min={10}
-            max={100}
+            max={150}
             step={5}
             reset={85}
-            display={`${Math.round(r.decrackle_amount * 100)}%`}
+            display={`${Math.round(r.decrackle_amount * 100)}%${crackPasses(r.decrackle_amount) > 1 ? ` ×${crackPasses(r.decrackle_amount)}` : ""}`}
             disabled={off}
             onChange={(v) => s.patchRepair({ decrackle_amount: v / 100 })}
           />
           <p className="fine">
-            أقل من 70% تكاد لا تغيّر شيئًا. الخروشة الكثيفة تبدأ تختفي من 80%، وفوق 95% قد تُنعّم الصوت قليلًا.
+            أقل من 70% تكاد لا تغيّر شيئًا، والخروشة الكثيفة تبدأ تختفي من 80%. فوق 100% تمرّات إضافية (110% إلى 125% تمريرتان، وفوقها ثلاث) تشيل أكتر لكنها قد تُنعّم أصوات الحروف.
           </p>
         </div>
       )}

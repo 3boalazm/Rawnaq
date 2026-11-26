@@ -179,3 +179,8 @@ export function describeChanges(from: Settings, to: Settings): string[] {
   if (a.stereo !== b.stereo) out.push("قناتان");
   return out;
 }
+
+/** Passes the de-crackle makes at a strength (1 up to 100 %, then 2 and 3). */
+export function crackPasses(amount: number): number {
+  return amount <= 1 ? 1 : Math.min(3, 1 + Math.ceil((amount - 1) / 0.25));
+}

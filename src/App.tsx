@@ -5,7 +5,7 @@ import Rail, { type Tool } from "./components/Rail";
 import { SHORTCUTS, useShortcuts } from "./hooks/useShortcuts";
 import Timeline, { type Track } from "./components/Timeline";
 import { useSession } from "./hooks/useSession";
-import { ENGINES, formatTime, overallProgress, remaining, STAGE_LABEL, VERDICT } from "./lib/format";
+import { crackPasses, ENGINES, formatTime, overallProgress, remaining, STAGE_LABEL, VERDICT } from "./lib/format";
 import type { Peaks } from "./types";
 
 const TOOL_TITLE: Record<Tool, [string, string]> = {
@@ -248,14 +248,17 @@ export default function App() {
                     <input
                       type="range"
                       min={10}
-                      max={100}
+                      max={150}
                       step={5}
                       value={Math.round(s.settings.repair.decrackle_amount * 100)}
                       disabled={!!busy}
                       aria-label="قوة إزالة الخروشة"
                       onChange={(e) => s.patchRepair({ decrackle_amount: Number(e.target.value) / 100 })}
                     />
-                    <b dir="ltr">{Math.round(s.settings.repair.decrackle_amount * 100)}%</b>
+                    <b dir="ltr">
+                      {Math.round(s.settings.repair.decrackle_amount * 100)}%
+                      {crackPasses(s.settings.repair.decrackle_amount) > 1 && ` ×${crackPasses(s.settings.repair.decrackle_amount)}`}
+                    </b>
                   </div>
                 )}
               </div>
