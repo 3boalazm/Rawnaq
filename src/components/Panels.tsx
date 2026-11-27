@@ -315,6 +315,15 @@ export function MasterPanel({ s }: { s: Session }) {
           )}
         </p>
       )}
+      {processed && processed.enhance.limited_db >= 3 && (
+        <div className={`loud-warn${processed.enhance.limited_db >= 6 ? " strong" : ""}`} role="alert">
+          <b>{processed.enhance.limited_db >= 6 ? "الصوت أعلى من اللازم بكتير" : "الصوت عالٍ"}</b>
+          <span>
+            المحدِّد بيقص القمم بمقدار {processed.enhance.limited_db.toFixed(0)} dB، وده بيسبّب خروشة وتشوّه على السماعات
+            الصغيرة حتى لو التسجيل نفسه نضيف. نزّل «الصوت الرئيسي» أو اختر مستوى جهارة أقل.
+          </span>
+        </div>
+      )}
     </>
   );
 }
